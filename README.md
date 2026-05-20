@@ -70,6 +70,12 @@ python3 -m clipper_pipeline.server --host 127.0.0.1 --port 8787
 - 작업 완료 시 `result.clips`에 후보 6개 반환
 - `POST /api/jobs/{id}/render-selected`: 선택 후보 렌더링
 
+## 하이브리드 웹앱 운영
+
+DigitalOcean App Platform에서는 웹 화면과 작업 대기열만 운영하고, YouTube 다운로드/분석/렌더링은 집의 Mac mini 워커에서 실행할 수 있습니다. 이 방식은 서버 IP에서 발생하는 YouTube 봇 확인 문제를 피하기 위한 운영 구조입니다.
+
+자세한 설정은 `docs/hybrid-worker.md`를 참고합니다.
+
 ## 현재 실행 가능한 명령
 
 YouTube 주소의 메타데이터를 확인합니다.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -37,6 +38,19 @@ STEP_LABELS = {
     "render": "클립 생성",
     "validate_render": "렌더 검수",
 }
+
+
+def apply_ytdlp_auth_options(options: dict) -> dict:
+    """Add optional local browser/cookie auth for yt-dlp calls."""
+    cookie_file = os.getenv("YT_DLP_COOKIES")
+    cookies_from_browser = os.getenv("YT_DLP_COOKIES_FROM_BROWSER")
+    if cookie_file:
+        options["cookiefile"] = cookie_file
+    if cookies_from_browser:
+        parts = [part.strip() for part in cookies_from_browser.split(":") if part.strip()]
+        if parts:
+            options["cookiesfrombrowser"] = tuple(parts)
+    return options
 
 
 @dataclass
@@ -749,6 +763,7 @@ def youtube_info(url: str, out_path: Path) -> dict:
         "skip_download": True,
         "noplaylist": True,
     }
+    apply_ytdlp_auth_options(options)
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -858,6 +873,7 @@ def download_youtube(url: str, out_path: Path, max_height: int) -> Path:
         "quiet": False,
         "no_warnings": False,
     }
+    apply_ytdlp_auth_options(options)
     with YoutubeDL(options) as ydl:
         ydl.download([url])
 

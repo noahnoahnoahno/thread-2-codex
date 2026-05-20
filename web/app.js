@@ -112,7 +112,10 @@ function render() {
 
   if (state.view === "processing") {
     videoTitle.textContent = state.job?.result?.title || "영상 분석 중";
-    videoMeta.textContent = "로컬 파이프라인이 작업을 실행하고 있습니다.";
+    videoMeta.textContent =
+      state.job?.status === "queued"
+        ? "맥미니 워커 연결을 기다리고 있습니다."
+        : "맥미니 워커가 다운로드와 렌더링을 실행하고 있습니다.";
   }
 
   if (state.view === "done") {

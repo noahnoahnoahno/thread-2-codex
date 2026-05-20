@@ -21,5 +21,6 @@ ENV HOST=0.0.0.0
 ENV PORT=8080
 ENV CLIPPER_RUNS_DIR=/app/runs
 ENV CLIPPER_EXPORTS_DIR=/app/exports
+ENV CLIPPER_JOB_MODE=hybrid
 
 CMD ["python", "-m", "clipper_pipeline.server"]

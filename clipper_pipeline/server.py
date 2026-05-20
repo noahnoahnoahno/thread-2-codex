@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import mimetypes
 import os
 import threading
 import time
 import uuid
+import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,7 +35,9 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT / "web"
 RUNS_DIR = Path(os.getenv("CLIPPER_RUNS_DIR", ROOT / "runs"))
 EXPORTS_DIR = Path(os.getenv("CLIPPER_EXPORTS_DIR", ROOT / "exports"))
-APP_VERSION = "2026-05-21-original-port-v1"
+APP_VERSION = "2026-05-21-hybrid-worker-v1"
+JOB_MODE = os.getenv("CLIPPER_JOB_MODE", "local")
+WORKER_TOKEN = os.getenv("CLIPPER_WORKER_TOKEN", "")
 
 
 STEP_DEFINITIONS = [
@@ -68,8 +72,11 @@ def create_job(url: str) -> dict:
     }
     with JOBS_LOCK:
         JOBS[job_id] = job
-    thread = threading.Thread(target=run_job, args=(job_id,), daemon=True)
-    thread.start()
+    if JOB_MODE == "hybrid":
+        set_step(job_id, "download_youtube", "queued", 0)
+    else:
+        thread = threading.Thread(target=run_job, args=(job_id,), daemon=True)
+        thread.start()
     return job
 
 
@@ -94,7 +101,12 @@ def calculate_overall_progress(job: dict) -> int:
 
 def set_step(job_id: str, key: str, status: str, progress: int) -> None:
     def update(job: dict) -> None:
-        job["status"] = "running" if status != "failed" else "failed"
+        if status == "failed":
+            job["status"] = "failed"
+        elif status in {"queued", "pending"}:
+            job["status"] = "queued"
+        else:
+            job["status"] = "running"
         job["currentStep"] = key
         for step in job["steps"]:
             if step["key"] == key:
@@ -106,6 +118,123 @@ def set_step(job_id: str, key: str, status: str, progress: int) -> None:
 
 def complete_step(job_id: str, key: str) -> None:
     set_step(job_id, key, "done", 100)
+
+
+def authorize_worker(headers) -> bool:
+    if not WORKER_TOKEN:
+        return False
+    auth_header = headers.get("Authorization", "")
+    return auth_header == f"Bearer {WORKER_TOKEN}"
+
+
+def next_worker_job() -> dict | None:
+    with JOBS_LOCK:
+        queued = [
+            job
+            for job in JOBS.values()
+            if job.get("status") == "queued" and not job.get("workerStartedAt")
+        ]
+        if not queued:
+            return None
+        job = sorted(queued, key=lambda item: item.get("createdAt", 0))[0]
+        job["workerStartedAt"] = time.time()
+        job["status"] = "running"
+        job["currentStep"] = "download_youtube"
+        for step in job["steps"]:
+            if step["key"] == "download_youtube":
+                step["status"] = "running"
+                step["progress"] = max(int(step.get("progress", 0)), 2)
+        job["progress"] = calculate_overall_progress(job)
+        return json.loads(json.dumps(job, ensure_ascii=False))
+
+
+def apply_worker_status(job_id: str, payload: dict) -> dict:
+    def update(job: dict) -> None:
+        if payload.get("status"):
+            job["status"] = payload["status"]
+        if payload.get("currentStep") is not None:
+            job["currentStep"] = payload["currentStep"]
+        if payload.get("failure") is not None:
+            job["failure"] = payload["failure"]
+        incoming_steps = payload.get("steps")
+        if isinstance(incoming_steps, list):
+            by_key = {step.get("key"): step for step in incoming_steps}
+            for step in job["steps"]:
+                incoming = by_key.get(step["key"])
+                if incoming:
+                    step["status"] = incoming.get("status", step["status"])
+                    step["progress"] = incoming.get("progress", step["progress"])
+        step_key = payload.get("step")
+        if step_key:
+            for step in job["steps"]:
+                if step["key"] == step_key:
+                    step["status"] = payload.get("stepStatus", step["status"])
+                    step["progress"] = payload.get("stepProgress", step["progress"])
+
+    mutate_job(job_id, update)
+    job = get_job(job_id)
+    if not job:
+        raise ValueError("Job not found")
+    return job
+
+
+def complete_worker_job(job_id: str, body: bytes) -> dict:
+    job = get_job(job_id)
+    if not job:
+        raise ValueError("Job not found")
+
+    run_dir = (RUNS_DIR / f"worker-{job_id}").resolve()
+    if run_dir.exists():
+        for child in sorted(run_dir.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        for member in archive.infolist():
+            target = (run_dir / member.filename).resolve()
+            if run_dir not in target.parents and target != run_dir:
+                raise ValueError("Invalid worker archive path")
+        archive.extractall(run_dir)
+
+    handoff_path = run_dir / "handoff.json"
+    if not handoff_path.exists():
+        raise ValueError("Worker archive is missing handoff.json")
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    files = handoff.get("files") if isinstance(handoff.get("files"), dict) else {}
+
+    input_path = run_dir / str(files.get("input") or "input.mp4")
+    candidates_path = run_dir / str(files.get("candidates") or "candidates.json")
+    edit_config_path = run_dir / str(files.get("editConfig") or "edit-config-web.json")
+    render_path = run_dir / str(files.get("render") or "renders/clip-001-web.mp4")
+
+    def update(job_data: dict) -> None:
+        for step in job_data["steps"]:
+            step["status"] = "done"
+            step["progress"] = 100
+        job_data["status"] = "done"
+        job_data["currentStep"] = None
+        job_data["failure"] = None
+        job_data["result"] = {
+            "runDir": str(run_dir),
+            "title": handoff.get("title"),
+            "channel": handoff.get("channel"),
+            "inputUrl": media_url(input_path),
+            "candidatesPath": str(candidates_path),
+            "clips": handoff.get("clips") or [],
+            "editConfig": str(edit_config_path),
+            "render": str(render_path),
+            "renderUrl": media_url(render_path),
+            "processedBy": handoff.get("workerId") or "hybrid-worker",
+        }
+
+    mutate_job(job_id, update)
+    completed = get_job(job_id)
+    if not completed:
+        raise ValueError("Job not found")
+    return completed
 
 
 def serialize_candidate(candidate, index: int) -> dict:
@@ -488,6 +617,12 @@ class ClipperRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/version":
             self.send_json({"version": APP_VERSION})
             return
+        if parsed.path == "/api/worker/jobs/next":
+            if not authorize_worker(self.headers):
+                self.send_json({"error": "Worker token is missing or invalid"}, status=401)
+                return
+            self.send_json({"job": next_worker_job()})
+            return
         if parsed.path.startswith("/api/jobs/"):
             job_id = parsed.path.rsplit("/", 1)[-1]
             job = get_job(job_id)
@@ -507,6 +642,23 @@ class ClipperRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) == 5 and parts[0] == "api" and parts[1] == "worker" and parts[2] == "jobs":
+            if not authorize_worker(self.headers):
+                self.send_json({"error": "Worker token is missing or invalid"}, status=401)
+                return
+            job_id = parts[3]
+            try:
+                if parts[4] == "status":
+                    self.send_json(apply_worker_status(job_id, self.read_json()))
+                    return
+                if parts[4] == "complete":
+                    self.send_json(complete_worker_job(job_id, self.read_body()))
+                    return
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, status=400)
+                return
+
         if parsed.path == "/api/jobs":
             payload = self.read_json()
             url = str(payload.get("url", "")).strip()
@@ -516,7 +668,6 @@ class ClipperRequestHandler(BaseHTTPRequestHandler):
             job = create_job(url)
             self.send_json(job, status=201)
             return
-        parts = parsed.path.strip("/").split("/")
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "jobs" and parts[3] == "render-selected":
             payload = self.read_json()
             try:
@@ -528,11 +679,16 @@ class ClipperRequestHandler(BaseHTTPRequestHandler):
             return
         self.send_json({"error": "Not found"}, status=404)
 
-    def read_json(self) -> dict:
+    def read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length <= 0:
+            return b""
+        return self.rfile.read(length)
+
+    def read_json(self) -> dict:
+        raw = self.read_body()
+        if not raw:
             return {}
-        raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
     def send_json(self, payload: dict, status: int = 200) -> None:
