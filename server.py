@@ -10,7 +10,7 @@ import asyncio
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -101,6 +101,7 @@ async def analyze_subtitles(
 
 @app.post("/api/render")
 async def render_shorts(
+    background_tasks: BackgroundTasks,
     video: Annotated[UploadFile, File(...)],
     subtitles: Annotated[UploadFile, File(...)],
     count: Annotated[int, Form()] = 6,
@@ -116,35 +117,35 @@ async def render_shorts(
     job_dir = _new_job_dir()
     video_path = await _save_upload(video, job_dir)
     subtitle_path = await _save_upload(subtitles, job_dir)
-    output_dir = job_dir / "renders"
 
     try:
         analysis = _analyze_file(subtitle_path, count, min_duration, max_duration)
         candidates_path = job_dir / "candidates.json"
         candidates_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
-        candidates = load_transcript(subtitle_path)
-        clip_candidates = recommend_clips(
-            candidates,
-            count=count,
-            min_duration=min_duration,
-            max_duration=max_duration,
+        _write_job_status(
+            job_dir,
+            {
+                "job_id": job_dir.name,
+                "status": "queued",
+                "message": "렌더링 대기 중입니다.",
+                "clip_count": len(analysis["clips"]),
+                "rendered_count": 0,
+                "download_url": f"/api/jobs/{job_dir.name}/download",
+                "clips": analysis["clips"],
+            },
         )
-        rendered = render_candidates(
+        background_tasks.add_task(
+            _run_render_job,
+            job_dir,
             video_path,
-            clip_candidates,
-            output_dir,
-            segments=candidates,
-            layout=layout,
-            burn_subtitles=burn_subtitles,
-            limit=render_limit,
+            subtitle_path,
+            count,
+            min_duration,
+            max_duration,
+            layout,
+            burn_subtitles,
+            render_limit,
         )
-        zip_path = job_dir / "shorts-output.zip"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.write(candidates_path, "candidates.json")
-            for index, path in enumerate(rendered, start=1):
-                archive.write(path, f"renders/clip_{index:02}.mp4")
-            for index, srt_path in enumerate(sorted(output_dir.glob("*.srt")), start=1):
-                archive.write(srt_path, f"renders/clip_{index:02}.srt")
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -152,17 +153,36 @@ async def render_shorts(
 
     return {
         "job_id": job_dir.name,
+        "status": "queued",
         "clip_count": len(analysis["clips"]),
-        "rendered_count": len(rendered),
+        "rendered_count": 0,
+        "status_url": f"/api/jobs/{job_dir.name}/status",
         "download_url": f"/api/jobs/{job_dir.name}/download",
         "clips": analysis["clips"],
     }
+
+
+@app.get("/api/jobs/{job_id}/status")
+def render_job_status(job_id: str) -> dict:
+    if not _valid_job_id(job_id):
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.")
+    job_dir = JOBS_DIR / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.")
+    return _read_job_status(job_dir)
 
 
 @app.get("/api/jobs/{job_id}/download")
 def download_job(job_id: str) -> FileResponse:
     if not _valid_job_id(job_id):
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.")
+    job_dir = JOBS_DIR / job_id
+    if job_dir.exists():
+        status_payload = _read_job_status(job_dir)
+        if status_payload.get("status") in {"queued", "running"}:
+            raise HTTPException(status_code=425, detail="렌더링이 아직 진행 중입니다.")
+        if status_payload.get("status") == "failed":
+            raise HTTPException(status_code=500, detail=status_payload.get("error") or "렌더링에 실패했습니다.")
     zip_path = JOBS_DIR / job_id / "shorts-output.zip"
     if not zip_path.exists():
         raise HTTPException(status_code=404, detail="다운로드 파일을 찾을 수 없습니다.")
@@ -212,6 +232,90 @@ def _analyze_file(
         "clip_count": len(candidates),
         "clips": [candidate.to_dict() for candidate in candidates],
     }
+
+
+def _run_render_job(
+    job_dir: Path,
+    video_path: Path,
+    subtitle_path: Path,
+    count: int,
+    min_duration: float,
+    max_duration: float,
+    layout: str,
+    burn_subtitles: bool,
+    render_limit: int,
+) -> None:
+    output_dir = job_dir / "renders"
+    try:
+        _write_job_status(
+            job_dir,
+            {
+                **_read_job_status(job_dir),
+                "status": "running",
+                "message": "FFmpeg 렌더링 중입니다.",
+            },
+        )
+        segments = load_transcript(subtitle_path)
+        clip_candidates = recommend_clips(
+            segments,
+            count=count,
+            min_duration=min_duration,
+            max_duration=max_duration,
+        )
+        rendered = render_candidates(
+            video_path,
+            clip_candidates,
+            output_dir,
+            segments=segments,
+            layout=layout,
+            burn_subtitles=burn_subtitles,
+            limit=render_limit,
+        )
+        candidates_path = job_dir / "candidates.json"
+        zip_path = job_dir / "shorts-output.zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(candidates_path, "candidates.json")
+            for index, path in enumerate(rendered, start=1):
+                archive.write(path, f"renders/clip_{index:02}.mp4")
+            for index, srt_path in enumerate(sorted(output_dir.glob("*.srt")), start=1):
+                archive.write(srt_path, f"renders/clip_{index:02}.srt")
+        _write_job_status(
+            job_dir,
+            {
+                **_read_job_status(job_dir),
+                "status": "succeeded",
+                "message": "렌더링 완료",
+                "rendered_count": len(rendered),
+            },
+        )
+    except Exception as exc:
+        _write_job_status(
+            job_dir,
+            {
+                **_read_job_status(job_dir),
+                "status": "failed",
+                "message": "렌더링 실패",
+                "error": str(exc),
+            },
+        )
+
+
+def _status_path(job_dir: Path) -> Path:
+    return job_dir / "status.json"
+
+
+def _read_job_status(job_dir: Path) -> dict:
+    path = _status_path(job_dir)
+    if not path.exists():
+        return {"job_id": job_dir.name, "status": "unknown", "message": "작업 상태 파일이 없습니다."}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_job_status(job_dir: Path, payload: dict) -> None:
+    path = _status_path(job_dir)
+    tmp_path = job_dir / "status.tmp.json"
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _valid_job_id(job_id: str) -> bool:

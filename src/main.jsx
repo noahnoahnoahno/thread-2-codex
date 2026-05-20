@@ -130,8 +130,17 @@ function App() {
       const response = await fetch('/api/render', { method: 'POST', body: form });
       const payload = await readJson(response);
       writeResult(payload);
-      setDownloadUrl(payload.download_url || '');
-      setStatus(`렌더링 완료: MP4 ${payload.rendered_count}개`);
+      setDownloadUrl('');
+      setStatus('렌더링 작업이 접수되었습니다. 완료 상태를 확인 중입니다.');
+      const finalPayload = payload.status_url
+        ? await pollRenderJob(payload, (nextPayload) => {
+          writeResult(nextPayload);
+          setStatus(nextPayload.message || '렌더링 상태 확인 중입니다.');
+        })
+        : payload;
+      writeResult(finalPayload);
+      setDownloadUrl(finalPayload.download_url || '');
+      setStatus(`렌더링 완료: MP4 ${finalPayload.rendered_count || 0}개`);
     });
   };
 
@@ -319,6 +328,29 @@ async function readJson(response) {
     throw new Error(payload.detail || '요청 처리에 실패했습니다.');
   }
   return payload;
+}
+
+async function pollRenderJob(initialPayload, onUpdate) {
+  let payload = initialPayload;
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    if (payload.status === 'succeeded') {
+      return payload;
+    }
+    if (payload.status === 'failed') {
+      throw new Error(payload.error || payload.message || '렌더링에 실패했습니다.');
+    }
+    await sleep(3000);
+    const response = await fetch(payload.status_url, { cache: 'no-store' });
+    payload = await readJson(response);
+    onUpdate(payload);
+  }
+  throw new Error('렌더링 상태 확인 시간이 초과되었습니다.');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function formatTime(seconds) {
