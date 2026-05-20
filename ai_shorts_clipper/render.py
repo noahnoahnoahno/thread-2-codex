@@ -87,6 +87,8 @@ def render_clip(
         "libx264",
         "-preset",
         "veryfast",
+        "-threads",
+        "2",
         "-crf",
         "23",
         "-c:a",
@@ -105,7 +107,7 @@ def layout_filter(layout: str) -> str:
     if layout == "letterbox":
         return "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"
     if layout == "crop":
-        return "scale='if(gt(a,9/16),-2,1080)':'if(gt(a,9/16),1920,-2)',crop=1080:1920"
+        return "crop='if(gt(a,9/16),ih*9/16,iw)':'if(gt(a,9/16),ih,iw*16/9)',scale=1080:1920"
     raise ValueError("layout must be 'crop' or 'letterbox'")
 
 
