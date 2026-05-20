@@ -332,6 +332,7 @@ async function readJson(response) {
 
 async function pollRenderJob(initialPayload, onUpdate) {
   let payload = initialPayload;
+  const statusUrl = initialPayload.status_url;
   for (let attempt = 0; attempt < 240; attempt += 1) {
     if (payload.status === 'succeeded') {
       return payload;
@@ -340,7 +341,7 @@ async function pollRenderJob(initialPayload, onUpdate) {
       throw new Error(payload.error || payload.message || '렌더링에 실패했습니다.');
     }
     await sleep(3000);
-    const response = await fetch(payload.status_url, { cache: 'no-store' });
+    const response = await fetch(statusUrl, { cache: 'no-store' });
     payload = await readJson(response);
     onUpdate(payload);
   }

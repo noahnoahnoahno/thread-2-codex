@@ -136,6 +136,7 @@ async def render_shorts(
                 "message": "렌더링 대기 중입니다.",
                 "clip_count": len(analysis["clips"]),
                 "rendered_count": 0,
+                "status_url": f"/api/jobs/{job_dir.name}/status",
                 "download_url": f"/api/jobs/{job_dir.name}/download",
                 "clips": analysis["clips"],
             },
