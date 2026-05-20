@@ -1,224 +1,201 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import {
-  ArrowUpRight,
-  BadgeCheck,
-  Captions,
-  CheckCircle2,
-  Clock3,
-  FileVideo2,
-  Film,
-  Gauge,
-  KeyRound,
-  Layers3,
-  ListChecks,
-  MonitorPlay,
-  PlaySquare,
-  Scissors,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  UploadCloud,
-  WandSparkles,
-} from 'lucide-react';
 import './styles.css';
 
-const metrics = [
-  { label: '후보 클립', value: '6개', note: '자막 기반 자동 추천', icon: Scissors },
-  { label: '렌더 비율', value: '9:16', note: '1080x1920 쇼츠 출력', icon: MonitorPlay },
-  { label: '처리 방식', value: '로컬', note: '권한 있는 원본 파일 기준', icon: ShieldCheck },
-  { label: '다음 단계', value: '큐 분리', note: '서버 백엔드 예정', icon: Layers3 },
+const APP_TITLE = '롱폼 to 쇼츠 자동변환기';
+const DEFAULT_OUTPUT_DIR = '/Users/noahai/Downloads/AI Shorts Clipper';
+const permissionStates = [
+  'needs_review',
+  'user_owned',
+  'licensed',
+  'platform_export',
+  'embed_only',
+  'blocked',
 ];
 
-const pipeline = [
-  {
-    title: '원본 준비',
-    text: '권한이 있는 롱폼 영상과 SRT/VTT 자막을 준비합니다.',
-    icon: UploadCloud,
-  },
-  {
-    title: '자막 파싱',
-    text: '타임스탬프를 읽어 후킹, 숫자, 감정, 실용 신호를 점수화합니다.',
-    icon: Captions,
-  },
-  {
-    title: '후보 추천',
-    text: '18~60초 길이의 쇼츠 후보를 겹침 없이 6개까지 추립니다.',
-    icon: WandSparkles,
-  },
-  {
-    title: '편집 검수',
-    text: '제목, 자막, 레이아웃, 브랜딩, 시작/끝 지점을 사람이 확인합니다.',
-    icon: SlidersHorizontal,
-  },
-  {
-    title: 'MP4 렌더링',
-    text: 'FFmpeg로 세로형 쇼츠를 만들고 결과 폴더에 산출물을 남깁니다.',
-    icon: Film,
-  },
-];
+function detectPlatform(url) {
+  try {
+    const { hostname } = new URL(url);
+    const host = hostname.replace(/^www\./, '').toLowerCase();
+    if (host === 'youtu.be' || host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com' || host.endsWith('.youtube.com')) {
+      return 'youtube';
+    }
+    if (host === 'tiktok.com' || host === 'vm.tiktok.com' || host === 'vt.tiktok.com' || host.endsWith('.tiktok.com')) {
+      return 'tiktok';
+    }
+    if (host === 'douyin.com' || host === 'iesdouyin.com' || host === 'v.douyin.com' || host.endsWith('.douyin.com')) {
+      return 'douyin';
+    }
+    if (host === 'threads.net' || host === 'threads.com' || host.endsWith('.threads.net') || host.endsWith('.threads.com')) {
+      return 'threads';
+    }
+  } catch {
+    return 'unsupported';
+  }
+  return 'unsupported';
+}
 
-const safeguards = [
-  '권한 없는 외부 영상 다운로드를 기본 흐름으로 넣지 않음',
-  '대용량 원본 영상과 결과 MP4는 GitHub 업로드 제외',
-  'API 키와 로컬 작업 로그는 공개 저장소에서 분리',
-  '자막/영상 분석 결과는 사용자가 검수한 뒤 렌더링',
-  '실제 처리 기능은 서버 작업 큐와 저장소 정책 확정 후 연결',
-];
+function inspectAllowedUrl(url, permissionState) {
+  const platform = detectPlatform(url);
+  if (platform === 'unsupported') {
+    return {
+      platform,
+      original_url: url,
+      canonical_url: null,
+      title: null,
+      thumbnail_url: null,
+      duration_sec: null,
+      capabilities: ['blocked'],
+      permission_state: 'blocked',
+      next_action: 'block',
+      source_notes: ['Unsupported URL. Upload a local file if you have rights to process it.'],
+    };
+  }
 
-const outputs = [
-  { label: 'candidates.json', text: '추천 구간, 제목, 점수, 해시태그' },
-  { label: 'final_shorts.mp4', text: '9:16 세로형 쇼츠 결과물' },
-  { label: 'clip.srt', text: '클립별 자막 사이드카 파일' },
-  { label: 'review notes', text: '편집 메모와 검수 경고' },
-];
+  const allowedStates = new Set(['user_owned', 'licensed', 'platform_export']);
+  const capabilities = ['metadata', 'upload_required'];
+  const sourceNotes = [
+    'Metadata and embed checks should run before any binary import.',
+    'Direct extraction is disabled unless the extractor feature flag and permission gate are both enabled.',
+  ];
+
+  if (platform === 'youtube' || platform === 'threads') {
+    capabilities.push('embed');
+  }
+  if (platform === 'tiktok' || platform === 'douyin') {
+    capabilities.push('authorized_user_export');
+  }
+
+  const nextAction = allowedStates.has(permissionState) ? 'import_media' : 'request_upload';
+  if (allowedStates.has(permissionState)) {
+    capabilities.push('authorized_binary_import');
+  }
+
+  return {
+    platform,
+    original_url: url,
+    canonical_url: url,
+    title: null,
+    thumbnail_url: null,
+    duration_sec: null,
+    capabilities,
+    permission_state: permissionState,
+    next_action: nextAction,
+    source_notes: sourceNotes,
+  };
+}
 
 function App() {
+  const [url, setUrl] = useState('');
+  const [permissionState, setPermissionState] = useState('needs_review');
+  const [extractorEnabled, setExtractorEnabled] = useState(false);
+  const [outputDir, setOutputDir] = useState(DEFAULT_OUTPUT_DIR);
+  const [status, setStatus] = useState('URL을 붙여넣고 먼저 검사하세요.');
+  const [result, setResult] = useState('');
+
+  const resultValue = useMemo(() => result, [result]);
+
+  const writeResult = (payload) => {
+    setResult(JSON.stringify(payload, null, 2));
+  };
+
+  const inspectUrl = () => {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      window.alert('URL을 입력하세요.');
+      return;
+    }
+    const flow = inspectAllowedUrl(trimmedUrl, permissionState);
+    writeResult(flow);
+    setStatus(`검사 완료: ${flow.platform} / next_action=${flow.next_action}`);
+  };
+
+  const chooseOutputDir = () => {
+    window.alert('웹앱에서는 로컬 폴더 선택 창을 직접 열 수 없습니다. 데스크톱 앱에서는 폴더 선택 창이 열립니다.');
+  };
+
+  const extractUrl = () => {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      window.alert('URL을 입력하세요.');
+      return;
+    }
+    if (!extractorEnabled) {
+      window.alert('추출 엔진 사용 체크가 필요합니다.');
+      return;
+    }
+    if (!['user_owned', 'licensed', 'platform_export'].includes(permissionState)) {
+      window.alert('추출하려면 권한 상태가 user_owned, licensed, platform_export 중 하나여야 합니다.');
+      return;
+    }
+    setStatus('추출 중입니다. 창을 닫지 마세요.');
+    writeResult({
+      status: 'extract_failed',
+      message: '정적 웹앱에서는 로컬 추출 엔진을 실행할 수 없습니다. 원본 데스크톱 앱 또는 별도 백엔드 연결이 필요합니다.',
+      original_url: trimmedUrl,
+      output_dir: outputDir,
+      permission_state: permissionState,
+      extractor_enabled: extractorEnabled,
+    });
+    setStatus('추출 실패');
+  };
+
   return (
     <main className="app-shell">
-      <section className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">
-            <Sparkles size={18} />
-            THREAD 2
-          </p>
-          <h1>03 롱폼 to 쇼츠 자동변환기</h1>
-          <p className="lede">
-            긴 영상과 자막을 분석해 쇼츠 후보를 추천하고, 검수 후 9:16 MP4로
-            렌더링하는 제작 보조 워크플로우입니다.
-          </p>
-          <div className="hero-actions">
-            <a className="primary-action" href="#pipeline">
-              변환 흐름 보기
-              <ArrowUpRight size={18} />
-            </a>
-            <a className="secondary-action" href="https://ningning.kr">
-              게이트로 이동
-            </a>
-          </div>
+      <section className="app-window" aria-label={APP_TITLE}>
+        <h1>{APP_TITLE}</h1>
+        <p className="subtitle">권한 확인 후 허용된 URL만 로컬 파일로 가져옵니다.</p>
+
+        <div className="url-row">
+          <input
+            aria-label="URL"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+          />
+          <button type="button" onClick={inspectUrl}>검사</button>
         </div>
 
-        <div className="hero-visual" aria-hidden="true">
-          <div className="editor-frame">
-            <div className="source-card">
-              <FileVideo2 size={28} />
-              <div>
-                <strong>longform_source.mp4</strong>
-                <span>42:18 · transcript synced</span>
-              </div>
-            </div>
-            <div className="shorts-preview">
-              <div className="phone-screen">
-                <PlaySquare size={42} />
-                <strong>00:42</strong>
-                <span>Hook score 87</span>
-              </div>
-              <div className="candidate-stack">
-                <div><span>01</span><strong>충격 도입부</strong></div>
-                <div><span>02</span><strong>숫자 증거</strong></div>
-                <div><span>03</span><strong>실행 팁</strong></div>
-              </div>
-            </div>
-          </div>
+        <div className="controls-row">
+          <label htmlFor="permission">권한 상태</label>
+          <select
+            id="permission"
+            value={permissionState}
+            onChange={(event) => setPermissionState(event.target.value)}
+          >
+            {permissionStates.map((state) => (
+              <option value={state} key={state}>{state}</option>
+            ))}
+          </select>
+          <label className="check-control">
+            <input
+              type="checkbox"
+              checked={extractorEnabled}
+              onChange={(event) => setExtractorEnabled(event.target.checked)}
+            />
+            선택 추출 엔진 사용
+          </label>
         </div>
-      </section>
 
-      <section className="metric-grid" aria-label="포팅 현황">
-        {metrics.map((item) => {
-          const Icon = item.icon;
-          return (
-            <article className="metric-card" key={item.label}>
-              <Icon size={24} />
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-              <p>{item.note}</p>
-            </article>
-          );
-        })}
-      </section>
+        <div className="output-row">
+          <label htmlFor="output-dir">저장 폴더</label>
+          <input
+            id="output-dir"
+            value={outputDir}
+            onChange={(event) => setOutputDir(event.target.value)}
+          />
+          <button type="button" onClick={chooseOutputDir}>선택</button>
+        </div>
 
-      <section className="content-grid">
-        <article className="panel wide" id="pipeline">
-          <div className="section-head">
-            <Gauge size={24} />
-            <div>
-              <h2>자동변환 파이프라인</h2>
-              <p>첫 공개 웹앱은 처리 구조와 운영 상태를 보여주고, 실제 렌더링은 백엔드 분리 후 연결합니다.</p>
-            </div>
-          </div>
-          <div className="pipeline-list">
-            {pipeline.map((step, index) => {
-              const Icon = step.icon;
-              return (
-                <div className="pipeline-step" key={step.title}>
-                  <div className="step-index">{String(index + 1).padStart(2, '0')}</div>
-                  <div className="step-icon"><Icon size={22} /></div>
-                  <div>
-                    <h3>{step.title}</h3>
-                    <p>{step.text}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </article>
+        <textarea
+          aria-label="검사 결과"
+          value={resultValue}
+          readOnly
+        />
 
-        <aside className="panel">
-          <div className="section-head compact">
-            <ShieldCheck size={24} />
-            <div>
-              <h2>공개 배포 기준</h2>
-              <p>Static Site 포팅</p>
-            </div>
-          </div>
-          <ul className="check-list">
-            {safeguards.map((item) => (
-              <li key={item}>
-                <CheckCircle2 size={18} />
-                {item}
-              </li>
-            ))}
-          </ul>
-        </aside>
-      </section>
-
-      <section className="content-grid bottom">
-        <article className="panel">
-          <div className="section-head compact">
-            <ListChecks size={24} />
-            <div>
-              <h2>주요 산출물</h2>
-              <p>원본 프로젝트 기준</p>
-            </div>
-          </div>
-          <div className="output-list">
-            {outputs.map((item) => (
-              <div className="output-row" key={item.label}>
-                <BadgeCheck size={18} />
-                <div>
-                  <strong>{item.label}</strong>
-                  <span>{item.text}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="panel deploy-panel">
-          <div className="section-head compact">
-            <KeyRound size={24} />
-            <div>
-              <h2>배포 상태</h2>
-              <p>thread-2 슬롯</p>
-            </div>
-          </div>
-          <div className="deploy-rows">
-            <div><span>도메인</span><strong>thread-2.ningning.kr</strong></div>
-            <div><span>GitHub</span><strong>thread-2-codex</strong></div>
-            <div><span>빌드</span><strong>npm run build / dist</strong></div>
-            <div><span>상태</span><strong><Clock3 size={15} /> 배포 준비</strong></div>
-          </div>
-        </article>
+        <div className="action-row">
+          <span>{status}</span>
+          <button type="button" onClick={extractUrl}>추출 시작</button>
+        </div>
       </section>
     </main>
   );
