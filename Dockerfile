@@ -1,16 +1,3 @@
-FROM node:22-bookworm-slim AS frontend
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
-
-COPY index.html ./
-COPY public ./public
-COPY src ./src
-RUN npm run build
-
-
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -19,15 +6,20 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ai_shorts_clipper ./ai_shorts_clipper
-COPY server.py ./
-COPY --from=frontend /app/dist ./dist
+COPY clipper_pipeline ./clipper_pipeline
+COPY web ./web
 
+RUN mkdir -p /app/runs /app/exports
+
+ENV HOST=0.0.0.0
 ENV PORT=8080
-CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8080}"]
+ENV CLIPPER_RUNS_DIR=/app/runs
+ENV CLIPPER_EXPORTS_DIR=/app/exports
+
+CMD ["python", "-m", "clipper_pipeline.server"]

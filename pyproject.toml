@@ -1,0 +1,9 @@
+[project]
+name = "ai-shorts-clipper"
+version = "0.1.0"
+description = "Local MVP pipeline for generating shorts candidates from long-form video transcripts."
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10", "yt-dlp>=2025.1.1", "youtube-transcript-api>=1.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
