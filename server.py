@@ -24,6 +24,7 @@ APP_ROOT = Path(__file__).resolve().parent
 DIST_DIR = APP_ROOT / "dist"
 JOBS_DIR = Path(os.getenv("THREAD2_JOBS_DIR", tempfile.gettempdir())) / "thread2-jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+APP_VERSION = "2026-05-21-async-render-crop-v2"
 
 app = FastAPI(title="롱폼 to 쇼츠 자동변환기")
 
@@ -31,6 +32,11 @@ app = FastAPI(title="롱폼 to 쇼츠 자동변환기")
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/version")
+def version() -> dict[str, str]:
+    return {"version": APP_VERSION}
 
 
 @app.post("/api/inspect-url")
