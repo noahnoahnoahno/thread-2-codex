@@ -2,8 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-const APP_TITLE = '롱폼 to 쇼츠 자동변환기';
-const DEFAULT_OUTPUT_DIR = '/Users/noahai/Downloads/AI Shorts Clipper';
+const APP_TITLE = 'AI Shorts Clipper';
 const permissionStates = [
   'needs_review',
   'user_owned',
@@ -13,108 +12,57 @@ const permissionStates = [
   'blocked',
 ];
 
-function detectPlatform(url) {
-  try {
-    const { hostname } = new URL(url);
-    const host = hostname.replace(/^www\./, '').toLowerCase();
-    if (host === 'youtu.be' || host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com' || host.endsWith('.youtube.com')) {
-      return 'youtube';
-    }
-    if (host === 'tiktok.com' || host === 'vm.tiktok.com' || host === 'vt.tiktok.com' || host.endsWith('.tiktok.com')) {
-      return 'tiktok';
-    }
-    if (host === 'douyin.com' || host === 'iesdouyin.com' || host === 'v.douyin.com' || host.endsWith('.douyin.com')) {
-      return 'douyin';
-    }
-    if (host === 'threads.net' || host === 'threads.com' || host.endsWith('.threads.net') || host.endsWith('.threads.com')) {
-      return 'threads';
-    }
-  } catch {
-    return 'unsupported';
-  }
-  return 'unsupported';
-}
-
-function inspectAllowedUrl(url, permissionState) {
-  const platform = detectPlatform(url);
-  if (platform === 'unsupported') {
-    return {
-      platform,
-      original_url: url,
-      canonical_url: null,
-      title: null,
-      thumbnail_url: null,
-      duration_sec: null,
-      capabilities: ['blocked'],
-      permission_state: 'blocked',
-      next_action: 'block',
-      source_notes: ['Unsupported URL. Upload a local file if you have rights to process it.'],
-    };
-  }
-
-  const allowedStates = new Set(['user_owned', 'licensed', 'platform_export']);
-  const capabilities = ['metadata', 'upload_required'];
-  const sourceNotes = [
-    'Metadata and embed checks should run before any binary import.',
-    'Direct extraction is disabled unless the extractor feature flag and permission gate are both enabled.',
-  ];
-
-  if (platform === 'youtube' || platform === 'threads') {
-    capabilities.push('embed');
-  }
-  if (platform === 'tiktok' || platform === 'douyin') {
-    capabilities.push('authorized_user_export');
-  }
-
-  const nextAction = allowedStates.has(permissionState) ? 'import_media' : 'request_upload';
-  if (allowedStates.has(permissionState)) {
-    capabilities.push('authorized_binary_import');
-  }
-
-  return {
-    platform,
-    original_url: url,
-    canonical_url: url,
-    title: null,
-    thumbnail_url: null,
-    duration_sec: null,
-    capabilities,
-    permission_state: permissionState,
-    next_action: nextAction,
-    source_notes: sourceNotes,
-  };
-}
-
 function App() {
   const [url, setUrl] = useState('');
   const [permissionState, setPermissionState] = useState('needs_review');
   const [extractorEnabled, setExtractorEnabled] = useState(false);
-  const [outputDir, setOutputDir] = useState(DEFAULT_OUTPUT_DIR);
+  const [outputDir, setOutputDir] = useState('서버 작업 폴더');
+  const [subtitles, setSubtitles] = useState(null);
+  const [video, setVideo] = useState(null);
+  const [count, setCount] = useState(6);
+  const [minDuration, setMinDuration] = useState(18);
+  const [maxDuration, setMaxDuration] = useState(60);
+  const [renderLimit, setRenderLimit] = useState(3);
+  const [layout, setLayout] = useState('crop');
+  const [burnSubtitles, setBurnSubtitles] = useState(false);
   const [status, setStatus] = useState('URL을 붙여넣고 먼저 검사하세요.');
   const [result, setResult] = useState('');
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const resultValue = useMemo(() => result, [result]);
+  const clips = useMemo(() => {
+    try {
+      const parsed = JSON.parse(result);
+      return Array.isArray(parsed.clips) ? parsed.clips : [];
+    } catch {
+      return [];
+    }
+  }, [result]);
 
   const writeResult = (payload) => {
     setResult(JSON.stringify(payload, null, 2));
   };
 
-  const inspectUrl = () => {
+  const inspectUrl = async () => {
     const trimmedUrl = url.trim();
     if (!trimmedUrl) {
       window.alert('URL을 입력하세요.');
       return;
     }
-    const flow = inspectAllowedUrl(trimmedUrl, permissionState);
-    writeResult(flow);
-    setStatus(`검사 완료: ${flow.platform} / next_action=${flow.next_action}`);
+    await runTask('검사 중입니다.', async () => {
+      const response = await fetch('/api/inspect-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmedUrl, permission_state: permissionState }),
+      });
+      const payload = await readJson(response);
+      writeResult(payload);
+      setDownloadUrl('');
+      setStatus(`검사 완료: ${payload.platform} / next_action=${payload.next_action}`);
+    });
   };
 
-  const chooseOutputDir = () => {
-    window.alert('웹앱에서는 로컬 폴더 선택 창을 직접 열 수 없습니다. 데스크톱 앱에서는 폴더 선택 창이 열립니다.');
-  };
-
-  const extractUrl = () => {
+  const extractUrl = async () => {
     const trimmedUrl = url.trim();
     if (!trimmedUrl) {
       window.alert('URL을 입력하세요.');
@@ -128,16 +76,83 @@ function App() {
       window.alert('추출하려면 권한 상태가 user_owned, licensed, platform_export 중 하나여야 합니다.');
       return;
     }
-    setStatus('추출 중입니다. 창을 닫지 마세요.');
-    writeResult({
-      status: 'extract_failed',
-      message: '정적 웹앱에서는 로컬 추출 엔진을 실행할 수 없습니다. 원본 데스크톱 앱 또는 별도 백엔드 연결이 필요합니다.',
-      original_url: trimmedUrl,
-      output_dir: outputDir,
-      permission_state: permissionState,
-      extractor_enabled: extractorEnabled,
+    await runTask('추출 중입니다. 창을 닫지 마세요.', async () => {
+      const response = await fetch('/api/extract-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: trimmedUrl,
+          permission_state: permissionState,
+          extractor_enabled: extractorEnabled,
+        }),
+      });
+      const payload = await readJson(response);
+      writeResult(payload);
+      setDownloadUrl(payload.download_url || '');
+      setStatus('추출 완료');
     });
-    setStatus('추출 실패');
+  };
+
+  const analyze = async () => {
+    if (!subtitles) {
+      window.alert('자막 파일을 선택하세요.');
+      return;
+    }
+    const form = new FormData();
+    form.append('subtitles', subtitles);
+    form.append('count', String(count));
+    form.append('min_duration', String(minDuration));
+    form.append('max_duration', String(maxDuration));
+    await runTask('후보 클립을 분석 중입니다.', async () => {
+      const response = await fetch('/api/analyze', { method: 'POST', body: form });
+      const payload = await readJson(response);
+      writeResult(payload);
+      setDownloadUrl('');
+      setStatus(`분석 완료: 후보 ${payload.clip_count}개`);
+    });
+  };
+
+  const render = async () => {
+    if (!video || !subtitles) {
+      window.alert('영상 파일과 자막 파일을 모두 선택하세요.');
+      return;
+    }
+    const form = new FormData();
+    form.append('video', video);
+    form.append('subtitles', subtitles);
+    form.append('count', String(count));
+    form.append('min_duration', String(minDuration));
+    form.append('max_duration', String(maxDuration));
+    form.append('render_limit', String(renderLimit));
+    form.append('layout', layout);
+    form.append('burn_subtitles', String(burnSubtitles));
+    await runTask('렌더링 중입니다. 창을 닫지 마세요.', async () => {
+      const response = await fetch('/api/render', { method: 'POST', body: form });
+      const payload = await readJson(response);
+      writeResult(payload);
+      setDownloadUrl(payload.download_url || '');
+      setStatus(`렌더링 완료: MP4 ${payload.rendered_count}개`);
+    });
+  };
+
+  const chooseOutputDir = () => {
+    window.alert('웹앱에서는 서버 작업 폴더를 사용하고, 완료 파일은 ZIP으로 다운로드합니다.');
+    setOutputDir('서버 작업 폴더');
+  };
+
+  const runTask = async (message, task) => {
+    setBusy(true);
+    setStatus(message);
+    try {
+      await task();
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      writeResult({ error: messageText });
+      setDownloadUrl('');
+      setStatus('작업 실패');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -147,12 +162,8 @@ function App() {
         <p className="subtitle">권한 확인 후 허용된 URL만 로컬 파일로 가져옵니다.</p>
 
         <div className="url-row">
-          <input
-            aria-label="URL"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-          />
-          <button type="button" onClick={inspectUrl}>검사</button>
+          <input aria-label="URL" value={url} onChange={(event) => setUrl(event.target.value)} />
+          <button type="button" onClick={inspectUrl} disabled={busy}>검사</button>
         </div>
 
         <div className="controls-row">
@@ -161,6 +172,7 @@ function App() {
             id="permission"
             value={permissionState}
             onChange={(event) => setPermissionState(event.target.value)}
+            disabled={busy}
           >
             {permissionStates.map((state) => (
               <option value={state} key={state}>{state}</option>
@@ -171,6 +183,7 @@ function App() {
               type="checkbox"
               checked={extractorEnabled}
               onChange={(event) => setExtractorEnabled(event.target.checked)}
+              disabled={busy}
             />
             선택 추출 엔진 사용
           </label>
@@ -182,23 +195,137 @@ function App() {
             id="output-dir"
             value={outputDir}
             onChange={(event) => setOutputDir(event.target.value)}
+            disabled={busy}
           />
-          <button type="button" onClick={chooseOutputDir}>선택</button>
+          <button type="button" onClick={chooseOutputDir} disabled={busy}>선택</button>
         </div>
 
-        <textarea
-          aria-label="검사 결과"
-          value={resultValue}
-          readOnly
-        />
+        <section className="tool-box" aria-label="쇼츠 분석과 렌더링">
+          <h2>쇼츠 후보 분석 / 렌더링</h2>
+          <div className="file-row">
+            <label>
+              자막 파일
+              <input
+                type="file"
+                accept=".srt,.vtt,.txt"
+                onChange={(event) => setSubtitles(event.target.files?.[0] || null)}
+                disabled={busy}
+              />
+            </label>
+            <label>
+              영상 파일
+              <input
+                type="file"
+                accept="video/*,.mp4,.mov,.mkv,.webm,.m4v"
+                onChange={(event) => setVideo(event.target.files?.[0] || null)}
+                disabled={busy}
+              />
+            </label>
+          </div>
+
+          <div className="settings-row">
+            <label>
+              후보 수
+              <input
+                type="number"
+                min="1"
+                max="12"
+                value={count}
+                onChange={(event) => setCount(Number(event.target.value))}
+                disabled={busy}
+              />
+            </label>
+            <label>
+              최소 길이
+              <input
+                type="number"
+                min="1"
+                max="180"
+                value={minDuration}
+                onChange={(event) => setMinDuration(Number(event.target.value))}
+                disabled={busy}
+              />
+            </label>
+            <label>
+              최대 길이
+              <input
+                type="number"
+                min="1"
+                max="300"
+                value={maxDuration}
+                onChange={(event) => setMaxDuration(Number(event.target.value))}
+                disabled={busy}
+              />
+            </label>
+            <label>
+              렌더 수
+              <input
+                type="number"
+                min="1"
+                max="6"
+                value={renderLimit}
+                onChange={(event) => setRenderLimit(Number(event.target.value))}
+                disabled={busy}
+              />
+            </label>
+            <label>
+              레이아웃
+              <select value={layout} onChange={(event) => setLayout(event.target.value)} disabled={busy}>
+                <option value="crop">crop</option>
+                <option value="letterbox">letterbox</option>
+              </select>
+            </label>
+            <label className="check-control">
+              <input
+                type="checkbox"
+                checked={burnSubtitles}
+                onChange={(event) => setBurnSubtitles(event.target.checked)}
+                disabled={busy}
+              />
+              자막 굽기
+            </label>
+          </div>
+        </section>
+
+        {clips.length ? (
+          <section className="clips-box" aria-label="후보 클립">
+            {clips.map((clip, index) => (
+              <article key={`${clip.start_sec}-${clip.end_sec}`}>
+                <strong>{index + 1}. {clip.title}</strong>
+                <p>{clip.reason}</p>
+                <small>{formatTime(clip.start_sec)} - {formatTime(clip.end_sec)}</small>
+              </article>
+            ))}
+          </section>
+        ) : null}
+
+        <textarea aria-label="검사 결과" value={result} readOnly />
 
         <div className="action-row">
           <span>{status}</span>
-          <button type="button" onClick={extractUrl}>추출 시작</button>
+          <button type="button" onClick={extractUrl} disabled={busy}>추출 시작</button>
+          <button type="button" onClick={analyze} disabled={busy}>후보 분석</button>
+          <button type="button" onClick={render} disabled={busy}>렌더링</button>
+          {downloadUrl ? <a href={downloadUrl}>ZIP 다운로드</a> : null}
         </div>
       </section>
     </main>
   );
+}
+
+async function readJson(response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.detail || '요청 처리에 실패했습니다.');
+  }
+  return payload;
+}
+
+function formatTime(seconds) {
+  const value = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(value / 60);
+  const rest = Math.floor(value % 60);
+  return `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 
 createRoot(document.getElementById('root')).render(<App />);
