@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT / "web"
 RUNS_DIR = Path(os.getenv("CLIPPER_RUNS_DIR", ROOT / "runs"))
 EXPORTS_DIR = Path(os.getenv("CLIPPER_EXPORTS_DIR", ROOT / "exports"))
-APP_VERSION = "2026-05-22-hybrid-candidate-format-v2"
+APP_VERSION = "2026-05-22-hybrid-render-no-transcript-v3"
 JOB_MODE = os.getenv("CLIPPER_JOB_MODE", "local")
 WORKER_TOKEN = os.getenv("CLIPPER_WORKER_TOKEN", "")
 
@@ -430,6 +430,7 @@ def render_selected_clips(job_id: str, payload: dict) -> dict:
     run_dir = Path(result["runDir"])
     input_path = run_dir / "input.mp4"
     transcript_path = run_dir / "transcript.txt"
+    render_transcript_path = transcript_path if transcript_path.exists() else None
     candidates_path = Path(result["candidatesPath"])
     channel = str(result.get("channel") or "CHANNEL")
     requested_clips = payload.get("clips") if isinstance(payload.get("clips"), list) else []
@@ -456,7 +457,7 @@ def render_selected_clips(job_id: str, payload: dict) -> dict:
         output_path = render_dir / f"{stem}.mp4"
         metadata_path = render_dir / f"{stem}.json"
         config = write_web_edit_config(candidate, edit_config_path, channel, draft)
-        render_clip(input_path, candidate, output_path, config["layout"], edit_config_path, transcript_path)
+        render_clip(input_path, candidate, output_path, config["layout"], edit_config_path, render_transcript_path)
         metadata = write_upload_metadata(
             path=metadata_path,
             job=job,
