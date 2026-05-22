@@ -207,6 +207,42 @@ class TranscriptAnalysisTest(unittest.TestCase):
         self.assertEqual(actions["restart"]["target"], "url_input")
         self.assertEqual(actions["retry"]["command"], "download-youtube")
 
+    def test_load_candidate_accepts_hybrid_camel_case_payload(self) -> None:
+        output = Path("runs/test/camel-candidate.json")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(
+                {
+                    "clips": [
+                        {
+                            "startSec": 1.5,
+                            "endSec": 29.5,
+                            "durationSec": 28.0,
+                            "category": "general",
+                            "title": "테스트 클립",
+                            "reason": "하이브리드 워커 후보",
+                            "hashtags": ["#test"],
+                            "score": 9.1,
+                            "sourceText": "후보 문장",
+                            "mostReplayed": True,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        from clipper_pipeline.cli import load_candidate
+
+        candidate = load_candidate(output, 0)
+
+        self.assertEqual(candidate.start_sec, 1.5)
+        self.assertEqual(candidate.end_sec, 29.5)
+        self.assertEqual(candidate.duration_sec, 28.0)
+        self.assertEqual(candidate.source_text, "후보 문장")
+        self.assertTrue(candidate.most_replayed)
+
 
 if __name__ == "__main__":
     unittest.main()

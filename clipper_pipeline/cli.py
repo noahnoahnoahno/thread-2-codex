@@ -923,16 +923,24 @@ def load_candidate(path: Path, index: int) -> ClipCandidate:
     if index < 0 or index >= len(clips):
         raise ValueError(f"Index {index} is outside candidate range 0..{len(clips) - 1}")
     clip = clips[index]
+
+    def get_clip_value(snake_key: str, camel_key: str | None = None, fallback=None):
+        if snake_key in clip:
+            return clip[snake_key]
+        if camel_key and camel_key in clip:
+            return clip[camel_key]
+        return fallback
+
     return ClipCandidate(
-        start_sec=float(clip["start_sec"]),
-        end_sec=float(clip["end_sec"]),
-        duration_sec=float(clip["duration_sec"]),
+        start_sec=float(get_clip_value("start_sec", "startSec")),
+        end_sec=float(get_clip_value("end_sec", "endSec")),
+        duration_sec=float(get_clip_value("duration_sec", "durationSec")),
         category=str(clip.get("category", "general")),
         title=str(clip["title"]),
         reason=str(clip["reason"]),
-        hashtags=list(clip["hashtags"]),
-        score=float(clip["score"]),
-        source_text=str(clip.get("source_text", "")),
+        hashtags=list(clip.get("hashtags") or []),
+        score=float(clip.get("score", 0)),
+        source_text=str(get_clip_value("source_text", "sourceText", "")),
         most_replayed=bool(clip.get("most_replayed") or clip.get("mostReplayed", False)),
         replay_source=str(clip.get("replay_source") or clip.get("replaySource") or "analysis"),
         replay_score=(
