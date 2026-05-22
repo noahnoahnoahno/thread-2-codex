@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT / "web"
 RUNS_DIR = Path(os.getenv("CLIPPER_RUNS_DIR", ROOT / "runs"))
 EXPORTS_DIR = Path(os.getenv("CLIPPER_EXPORTS_DIR", ROOT / "exports"))
-APP_VERSION = "2026-05-21-hybrid-worker-v1"
+APP_VERSION = "2026-05-22-hybrid-candidate-format-v2"
 JOB_MODE = os.getenv("CLIPPER_JOB_MODE", "local")
 WORKER_TOKEN = os.getenv("CLIPPER_WORKER_TOKEN", "")
 
