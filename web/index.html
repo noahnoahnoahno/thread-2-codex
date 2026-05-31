@@ -3,246 +3,61 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Shorts Clipper</title>
+    <title>YouTube Shorts Uploader Codex</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="app-shell" data-view="input">
-      <section class="url-panel" aria-labelledby="url-title">
-        <div class="title-block">
-          <h1 id="url-title">YouTube URL을 붙여넣으세요</h1>
-          <p>AI가 자동으로 후킹 구간을 찾아 쇼츠로 만들어줍니다</p>
+    <header class="topbar">
+      <div>
+        <h1>YouTube Shorts Uploader Codex</h1>
+        <p id="generatedAt">베타 목업 리포트를 불러오는 중</p>
+      </div>
+      <div class="auth" id="authStatus"></div>
+    </header>
+
+    <main>
+      <section class="metrics" id="metrics"></section>
+
+      <section class="trigger-panel" aria-label="upload trigger">
+        <div class="trigger-controls">
+          <label>
+            <span>날짜</span>
+            <input id="triggerDate" type="text" inputmode="numeric" maxlength="8" />
+          </label>
+          <label class="check">
+            <input id="allowReview" type="checkbox" />
+            <span>검토 포함</span>
+          </label>
+          <button id="setupFolders" class="action secondary" type="button">폴더 확인</button>
+          <button id="writeTemplates" class="action secondary" type="button">JSON 양식 배포</button>
+          <button id="refreshScan" class="action secondary" type="button">스캔 갱신</button>
+          <button id="previewTrigger" class="action primary" type="button">미리보기</button>
+          <button id="executeTrigger" class="action danger" type="button">Private 업로드</button>
         </div>
-
-        <form class="url-form" id="url-form">
-          <input
-            id="youtube-url"
-            name="youtube-url"
-            type="url"
-            placeholder="YouTube 영상 URL을 붙여넣으세요"
-            autocomplete="off"
-          />
-          <button type="submit">
-            <span aria-hidden="true">▶</span>
-            쇼츠 만들기
-          </button>
-        </form>
+        <div id="triggerResult" class="trigger-result" aria-live="polite"></div>
       </section>
 
-      <section class="workspace" aria-live="polite">
-        <article class="video-card" id="video-card">
-          <div class="video-preview">
-            <div class="preview-ratio">
-              <div class="play-mark">▶</div>
-            </div>
+      <section class="toolbar">
+        <div class="toolbar-groups">
+          <div class="source-tabs" role="tablist" aria-label="source filters">
+            <button class="source-tab active" data-source="drive">오늘 Drive</button>
+            <button class="source-tab" data-source="all">전체 스캔</button>
           </div>
-          <div class="video-copy">
-            <h2 id="video-title">대기 중</h2>
-            <p id="video-meta">URL을 입력하면 영상 확인을 시작합니다.</p>
+          <div class="tabs" role="tablist" aria-label="filters">
+            <button class="tab active" data-filter="all">전체</button>
+            <button class="tab" data-filter="review">검토 필요</button>
+            <button class="tab" data-filter="ready">업로드 가능</button>
+            <button class="tab" data-filter="fail">영상 실패</button>
+            <button class="tab" data-filter="duplicate">중복</button>
           </div>
-        </article>
-
-        <article class="progress-card" id="progress-card">
-          <div class="progress-header">
-            <h2>처리 상태</h2>
-            <span id="overall-progress">0%</span>
-          </div>
-          <ol class="step-list" id="step-list"></ol>
-        </article>
-
-        <article class="failure-card" id="failure-card" hidden>
-          <div class="failure-icon">!</div>
-          <div class="failure-copy">
-            <h2 id="failure-title">작업 실패</h2>
-            <p id="failure-message"></p>
-          </div>
-          <div class="failure-actions">
-            <button id="restart-button" type="button" class="secondary-button">
-              <span aria-hidden="true">⌂</span>
-              처음으로
-            </button>
-            <button id="retry-button" type="button">
-              <span aria-hidden="true">↻</span>
-              다시 실행
-            </button>
-          </div>
-        </article>
-
-        <article class="result-card" id="result-card" hidden>
-          <div class="result-header">
-            <div>
-              <h2>AI 추천 후킹 구간</h2>
-              <p id="result-summary">후보를 선택해 클립 생성을 준비하세요.</p>
-            </div>
-            <button type="button" id="generate-selected-button">
-              <span aria-hidden="true">✓</span>
-              선택된 클립 생성
-            </button>
-          </div>
-          <div class="save-feedback" id="save-feedback" hidden></div>
-          <div class="candidate-toolbar">
-            <strong id="selected-count">0개 선택됨</strong>
-            <div>
-              <button type="button" class="secondary-button compact-button" id="select-all-button">전체 선택</button>
-              <button type="button" class="secondary-button compact-button" id="clear-all-button">전체 해제</button>
-            </div>
-          </div>
-          <div class="candidate-list" id="candidate-list"></div>
-          <section class="detail-panel" id="detail-panel" hidden>
-            <div class="detail-layout">
-              <div class="preview-pane">
-                <div class="preview-toolbar">
-                  <div>
-                    <p id="detail-kicker">#1 상세 편집</p>
-                    <h3 id="detail-title-heading">후보를 선택하세요</h3>
-                  </div>
-                  <span id="detail-time">00:00 - 00:00</span>
-                </div>
-                <div class="edit-preview" id="edit-preview">
-                  <video id="detail-video" muted loop playsinline controls></video>
-                  <div class="preview-title-overlay" id="preview-title-overlay"></div>
-                  <div class="preview-subtitle-overlay" id="preview-subtitle-overlay">자막 미리보기</div>
-                  <div class="preview-channel-overlay" id="preview-channel-overlay"></div>
-                  <div class="safe-zone-frame" aria-hidden="true"></div>
-                </div>
-              </div>
-              <div class="control-pane">
-                <div class="edit-actions">
-                  <button type="button" class="secondary-button compact-button" id="reset-detail-button">초기값 복원</button>
-                </div>
-
-                <section class="control-section">
-                  <div class="control-section-heading">
-                    <strong>상단 타이틀</strong>
-                    <span>NEXON Lv1 Gothic</span>
-                  </div>
-                  <div class="detail-grid">
-                    <label class="field wide-field">
-                      <span>영상 제목</span>
-                      <input id="detail-title-input" type="text" />
-                    </label>
-                    <label class="field">
-                      <span>크기</span>
-                      <input id="detail-title-size" type="range" min="44" max="96" step="1" />
-                    </label>
-                    <label class="field">
-                      <span>세로 위치</span>
-                      <input id="detail-title-y" type="range" min="8" max="88" step="1" />
-                    </label>
-                    <label class="field">
-                      <span>정렬</span>
-                      <select id="detail-title-align">
-                        <option value="center">가운데</option>
-                        <option value="left">왼쪽</option>
-                        <option value="right">오른쪽</option>
-                      </select>
-                    </label>
-                    <div class="field title-color-field">
-                      <span>색상</span>
-                      <div class="color-swatches" id="detail-title-color-options" aria-label="영상 제목 색상">
-                        <button type="button" class="color-swatch" data-color="#ffd43b" aria-label="노란색"></button>
-                        <button type="button" class="color-swatch" data-color="#ff8a00" aria-label="주황색"></button>
-                        <button type="button" class="color-swatch" data-color="#ffffff" aria-label="흰색"></button>
-                      </div>
-                    </div>
-                    <label class="switch-field">
-                      <input id="detail-title-stroke" type="checkbox" />
-                      <span>외곽선</span>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="control-section">
-                  <div class="control-section-heading">
-                    <strong>화면 구성</strong>
-                    <span>9:16 결과에 반영</span>
-                  </div>
-                  <div class="detail-grid">
-                    <label class="field">
-                      <span>레이아웃</span>
-                      <select id="detail-layout-select">
-                        <option value="letterbox">레터박스</option>
-                        <option value="crop">세로 크롭</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>줌</span>
-                      <input id="detail-crop-zoom" type="range" min="1" max="2" step="0.05" />
-                    </label>
-                    <label class="field">
-                      <span>가로 포커스</span>
-                      <input id="detail-crop-focus-x" type="range" min="0" max="1" step="0.01" />
-                    </label>
-                    <label class="field">
-                      <span>세로 포커스</span>
-                      <input id="detail-crop-focus-y" type="range" min="0" max="1" step="0.01" />
-                    </label>
-                    <label class="switch-field">
-                      <input id="detail-safe-zone" type="checkbox" />
-                      <span>세이프존</span>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="control-section">
-                  <div class="control-section-heading">
-                    <strong>자막</strong>
-                    <span>음성 인식 텍스트 기반</span>
-                  </div>
-                  <div class="detail-grid">
-                    <label class="field">
-                      <span>자막 크기</span>
-                      <input id="detail-subtitle-size" type="range" min="34" max="72" step="1" />
-                    </label>
-                    <label class="field">
-                      <span>자막 위치</span>
-                      <input id="detail-subtitle-y" type="range" min="18" max="88" step="1" />
-                    </label>
-                    <label class="switch-field">
-                      <input id="detail-subtitle-background" type="checkbox" />
-                      <span>자막 배경</span>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="control-section">
-                  <div class="control-section-heading">
-                    <strong>하단 채널명</strong>
-                    <span>브랜딩 표시</span>
-                  </div>
-                  <div class="detail-grid">
-                    <label class="switch-field">
-                      <input id="detail-channel-enabled" type="checkbox" />
-                      <span>채널명 표시</span>
-                    </label>
-                    <label class="field">
-                      <span>크기</span>
-                      <input id="detail-channel-size" type="range" min="28" max="58" step="1" />
-                    </label>
-                    <label class="field wide-field">
-                      <span>채널명</span>
-                      <input id="detail-channel-input" type="text" />
-                    </label>
-                  </div>
-                </section>
-
-                <div class="tag-editor">
-                  <div class="tag-heading">
-                    <strong>추천 해시태그</strong>
-                    <span>Enter 또는 추가 버튼으로 등록</span>
-                  </div>
-                  <div class="editable-tags" id="detail-tags"></div>
-                  <form class="tag-form" id="tag-form">
-                    <input id="detail-tag-input" type="text" placeholder="#태그입력" />
-                    <button type="submit" class="compact-button">추가</button>
-                  </form>
-                </div>
-              </div>
-            </div>
-          </section>
-        </article>
+        </div>
+        <input id="search" type="search" placeholder="제목, 프로젝트, 태그 검색" />
       </section>
+
+      <section class="grid" id="candidateGrid"></section>
     </main>
+
+    <script src="./report-data.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

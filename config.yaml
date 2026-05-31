@@ -1,0 +1,235 @@
+watch:
+  roots:
+    - name: randers_clips_archive
+      path: "/Users/noahai/Desktop/randers-clips"
+      adapter: randers_manifest
+    - name: longform_to_shorts_runs
+      path: "/Users/noahai/Desktop/put adress-auto/runs"
+      adapter: longform_runs
+    - name: movie_to_shorts_runs
+      path: "/Users/noahai/Desktop/movie to shorts codex/runs"
+      adapter: movie_runs
+    - name: manual_upload_inbox
+      path: "/Users/noahai/Desktop/shorts upload inbox"
+      adapter: upload_json
+
+auth:
+  provider: youtube_oauth
+  scopes:
+    - "https://www.googleapis.com/auth/youtube.upload"
+  credentials_json: "./secrets/auto_up_credentials.json"
+  token_json: "./secrets/auto_up_token.json"
+
+channels:
+  default: noahs-channel
+  items:
+    noahs-channel:
+      title: "noah's channel"
+      channel_id: "UC5T05J8gaT28_K9v2kZLFwA"
+      folder_names:
+        - "noah's channel"
+        - "noah'channel"
+        - "noah channel"
+        - "noahs-channel"
+      credentials_json: "./secrets/auto_up_credentials.json"
+      token_json: "./secrets/auto_up_token.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    dapjeongsa:
+      title: "답정사"
+      channel_id: "UCHGEivNsopvBGKgQzV41Sfw"
+      folder_names:
+        - "답정사"
+      credentials_json: "./secrets/auto_up_credentials.json"
+      token_json: "./secrets/youtube_dapjeongsa.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    nangman-tongsinsa:
+      title: "낭만통신사"
+      channel_id: "UC-9jyZrAOTj1imPWeCj5qIw"
+      folder_names:
+        - "낭만통신사"
+      credentials_json: "./secrets/auto_up_credentials.json"
+      token_json: "./secrets/youtube_nangman_tongsinsa.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    nature-asmr:
+      title: "Nature ASMR 4K Real Soundscapes"
+      channel_id: "UCbZY0ldyt7wTXOT2mnP905A"
+      folder_names:
+        - "Nature ASMR 4K Real Soundscapes"
+        - "nature-asmr"
+        - "ningning"
+      credentials_json: "./secrets/ningning_youtube_credentials.json"
+      token_json: "./secrets/youtube_ningning.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    amuseasia:
+      title: "AmuseAsia"
+      channel_id: "UCd8LhbN192sN972Q68avFfQ"
+      folder_names:
+        - "AmuseAsia"
+        - "amuseasia"
+      credentials_json: "./secrets/ningning_youtube_credentials.json"
+      token_json: "./secrets/youtube_amuseasia.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    vogue-city:
+      title: "Vogue City"
+      channel_id: "UCuUkZmy0oiLbUGaB71DvF3A"
+      folder_names:
+        - "Vogue City"
+        - "vogue-city"
+      credentials_json: "./secrets/ningning_youtube_credentials.json"
+      token_json: "./secrets/youtube_vogue_city.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    twosome-movie:
+      title: "투썸무비"
+      channel_id: "UCp1ecJN8Z3S6JircSjwcztQ"
+      folder_names:
+        - "투썸무비"
+        - "twosome-movie"
+      credentials_json: "./secrets/ningning_youtube_credentials.json"
+      token_json: "./secrets/youtube_twosome_movie.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+    mosongeeai:
+      title: "mosongeeAi"
+      channel_id: "UCEjvJ5aDgXqrAtfzFoxj5tg"
+      expected_title: ""
+      account: "mosongeeai"
+      folder_names:
+        - "mosongeeai"
+        - "mosongeeAi"
+      credentials_json: "./secrets/mosongeeai_youtube_credentials.json"
+      token_json: "./secrets/youtube_mosongeeai.json"
+      scopes:
+        - "https://www.googleapis.com/auth/youtube.upload"
+        - "https://www.googleapis.com/auth/youtube.readonly"
+drive_ingest:
+  enabled: true
+  # Dedicated Drive folder recommended:
+  # "NoahAI Shorts Upload Hub"
+  root_folder_url: "https://drive.google.com/drive/folders/1gR0cVVGvS_0zziSG1gmclDetTZQSpYR8"
+  root_folder_id: "1gR0cVVGvS_0zziSG1gmclDetTZQSpYR8"
+  timezone: "Asia/Seoul"
+  date_folder_format: "%Y%m%d"
+  # Empty means the app's current date in timezone.
+  # Example override: "20260522"
+  target_date: ""
+  date_folder_parent: root
+  folder_contract:
+    date_folder: "YYYYMMDD"
+    channel_folder: "YYYYMMDD/{channel-folder-name}"
+    uploaded_suffix: "_uploaded"
+    needs_review_suffix: "_needs_review"
+  scan_mode: polling
+  polling_interval_sec: 300
+  query:
+    include_mime_types:
+      - "video/mp4"
+      - "video/quicktime"
+      - "application/json"
+      - "text/plain"
+    exclude_trashed: true
+    modified_after_cursor: false
+    recursive_date_folder_scan: true
+    max_depth: 2
+  local_cache_dir: "./data/drive_cache"
+  state_db: "./data/drive_ingest.sqlite3"
+  # Existing YouTube token only has youtube.upload scope.
+  # Drive ingest needs a separate OAuth token with Drive read scope.
+  drive_credentials_json: "./secrets/auto_up_credentials.json"
+  drive_token_json: "./secrets/drive_token.json"
+  drive_scopes:
+    - "https://www.googleapis.com/auth/drive"
+
+drive_folder_setup:
+  channels:
+    - noahs-channel
+    - dapjeongsa
+    - nangman-tongsinsa
+    - nature-asmr
+    - vogue-city
+    - amuseasia
+    - twosome-movie
+    - mosongeeai
+
+trigger:
+  scan_limit: 500
+  source: drive
+  default_mode: dry_run
+  upload_privacy_status: private
+  require_execute_flag: true
+  allow_review_private: false
+
+upload:
+  default_privacy_status: private
+  default_category_id: "24"
+  default_language: ko
+  notify_subscribers: false
+  require_review_for_public: true
+  max_uploads_per_day: 20
+  min_seconds_between_uploads: 900
+
+metadata:
+  title_max_chars: 100
+  description_max_bytes: 5000
+  tags_max_chars: 500
+  backend_tags_target_count: 8
+  description_hashtags_target_count: 4
+  include_shorts_hashtag: true
+  seo_store: "./data/seo_metadata.sqlite3"
+  rules:
+    require_hook: true
+    require_viewer_attention: true
+    require_seo_fit: true
+    title_style: "시청자가 클릭할 이유가 분명한 후킹형 제목"
+    description_style: "첫 두 줄에 핵심 장면, 맥락, 검색 키워드를 자연스럽게 포함"
+    keyword_style: "영상 장면, 주제, 인물/장소/행동, 트렌드 키워드를 과하지 않게 포함"
+    forbid_clickbait: true
+    forbid_false_claims: true
+    forbid_emoji: true
+    forbid_decorative_symbols: true
+    forbid_sexualized_language: true
+  auto_from_image:
+    enabled: true
+    provider: gemini
+    model: "gemini-2.5-flash"
+    api_key_env: "GEMINI_API_KEY"
+    api_key_env_fallbacks:
+      - "GOOGLE_API_KEY"
+    allow_filename_fallback: true
+    generated_suffix: ".generated.json"
+
+dedupe:
+  strategy: sha256
+  database: "./data/upload_queue.sqlite3"
+  also_match:
+    - source_project
+    - source_video_id
+    - clip_index
+    - start_sec
+    - end_sec
+
+video_gate:
+  max_duration_sec: 180
+  require_square_or_vertical: true
+  preferred_width: 1080
+  preferred_height: 1920
+  min_file_bytes: 2048
+  reencode_if_needed: true
+
+outputs:
+  write_upload_result_json: true
+  upload_result_filename: "upload_result.json"
+  write_seo_result_json: true
+  seo_result_filename: "seo_metadata.json"

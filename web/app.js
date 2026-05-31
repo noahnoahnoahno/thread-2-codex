@@ -1,677 +1,467 @@
-const steps = [
-  { key: "download_youtube", label: "영상 다운로드" },
-  { key: "extract_audio", label: "오디오 추출" },
-  { key: "fetch_transcript", label: "음성 인식" },
-  { key: "analyze", label: "AI 분석" },
-  { key: "render", label: "클립 생성" },
-];
-
-const state = {
-  view: "input",
-  url: "",
-  job: null,
-  pollTimer: null,
-  failure: null,
-  selectedClips: new Set(),
-  activeClipIndex: null,
-  clipDrafts: new Map(),
+const report = window.UPLOADER_REPORT || {
+  generatedAt: "",
+  summary: { total: 0, ready: 0, review: 0, videoFail: 0, errors: 0, duplicates: {} },
+  candidates: [],
+  auth: {},
 };
 
-const form = document.querySelector("#url-form");
-const urlInput = document.querySelector("#youtube-url");
-const stepList = document.querySelector("#step-list");
-const overallProgress = document.querySelector("#overall-progress");
-const videoTitle = document.querySelector("#video-title");
-const videoMeta = document.querySelector("#video-meta");
-const failureCard = document.querySelector("#failure-card");
-const failureTitle = document.querySelector("#failure-title");
-const failureMessage = document.querySelector("#failure-message");
-const restartButton = document.querySelector("#restart-button");
-const retryButton = document.querySelector("#retry-button");
-const resultCard = document.querySelector("#result-card");
-const resultSummary = document.querySelector("#result-summary");
-const saveFeedback = document.querySelector("#save-feedback");
-const candidateList = document.querySelector("#candidate-list");
-const selectedCount = document.querySelector("#selected-count");
-const selectAllButton = document.querySelector("#select-all-button");
-const clearAllButton = document.querySelector("#clear-all-button");
-const generateSelectedButton = document.querySelector("#generate-selected-button");
-const detailPanel = document.querySelector("#detail-panel");
-const detailKicker = document.querySelector("#detail-kicker");
-const detailTitleHeading = document.querySelector("#detail-title-heading");
-const detailTime = document.querySelector("#detail-time");
-const detailTitleInput = document.querySelector("#detail-title-input");
-const detailTitleSize = document.querySelector("#detail-title-size");
-const detailTitleY = document.querySelector("#detail-title-y");
-const detailTitleAlign = document.querySelector("#detail-title-align");
-const detailTitleColorOptions = document.querySelectorAll("#detail-title-color-options .color-swatch");
-const detailTitleStroke = document.querySelector("#detail-title-stroke");
-const detailLayoutSelect = document.querySelector("#detail-layout-select");
-const detailCropZoom = document.querySelector("#detail-crop-zoom");
-const detailCropFocusX = document.querySelector("#detail-crop-focus-x");
-const detailCropFocusY = document.querySelector("#detail-crop-focus-y");
-const detailSafeZone = document.querySelector("#detail-safe-zone");
-const detailSubtitleSize = document.querySelector("#detail-subtitle-size");
-const detailSubtitleY = document.querySelector("#detail-subtitle-y");
-const detailSubtitleBackground = document.querySelector("#detail-subtitle-background");
-const detailChannelEnabled = document.querySelector("#detail-channel-enabled");
-const detailChannelInput = document.querySelector("#detail-channel-input");
-const detailChannelSize = document.querySelector("#detail-channel-size");
-const detailTags = document.querySelector("#detail-tags");
-const tagForm = document.querySelector("#tag-form");
-const detailTagInput = document.querySelector("#detail-tag-input");
-const detailVideo = document.querySelector("#detail-video");
-const editPreview = document.querySelector("#edit-preview");
-const previewTitleOverlay = document.querySelector("#preview-title-overlay");
-const previewSubtitleOverlay = document.querySelector("#preview-subtitle-overlay");
-const previewChannelOverlay = document.querySelector("#preview-channel-overlay");
-const safeZoneFrame = document.querySelector(".safe-zone-frame");
-const resetDetailButton = document.querySelector("#reset-detail-button");
+let activeFilter = "all";
+let activeSource = "drive";
+let searchText = "";
 
-const titleColorPresets = ["#ffd43b", "#ff8a00", "#ffffff"];
+const generatedAt = document.getElementById("generatedAt");
+const authStatus = document.getElementById("authStatus");
+const metrics = document.getElementById("metrics");
+const grid = document.getElementById("candidateGrid");
+const search = document.getElementById("search");
+const triggerDate = document.getElementById("triggerDate");
+const allowReview = document.getElementById("allowReview");
+const setupFolders = document.getElementById("setupFolders");
+const writeTemplates = document.getElementById("writeTemplates");
+const refreshScan = document.getElementById("refreshScan");
+const previewTrigger = document.getElementById("previewTrigger");
+const executeTrigger = document.getElementById("executeTrigger");
+const triggerResult = document.getElementById("triggerResult");
 
-function getStepState(stepKey) {
-  return state.job?.steps?.find((step) => step.key === stepKey);
+generatedAt.textContent = report.generatedAt ? `생성 시각 ${report.generatedAt}` : "리포트 없음";
+authStatus.innerHTML = `
+  <div>credentials ${report.auth.credentialsExists ? "연결됨" : "없음"}</div>
+  <div>token ${report.auth.tokenExists ? "연결됨" : "없음"}</div>
+  <div>drive token ${report.auth.driveTokenExists ? "연결됨" : "필요"}</div>
+  <div>drive date ${escapeHtml(report.drive?.target_date || "-")} · ${report.drive?.date_folder_found ? "폴더 있음" : "폴더 없음"}</div>
+  <div>default channel ${escapeHtml(report.channels?.default || "-")}</div>
+  <div>${escapeHtml(report.auth.mode || "beta")}</div>
+`;
+
+if (triggerDate) {
+  triggerDate.value = report.drive?.target_date || todayKey();
 }
 
-function renderSteps() {
-  stepList.innerHTML = "";
-  steps.forEach((step) => {
-    const stepState = getStepState(step.key) || {
-      status: "pending",
-      progress: 0,
-    };
-    const status = stepState.status;
-    const progress = Number(stepState.progress || 0);
-    const item = document.createElement("li");
-    item.className = `step-item ${status}`;
-    item.innerHTML = `
-      <span class="status-mark">${status === "done" ? "✓" : status === "failed" ? "!" : ""}</span>
-      <span class="step-label">${step.label}</span>
-      <span class="bar"><span class="bar-fill" style="--progress:${progress}%"></span></span>
-      <span class="step-percent">${Math.round(progress)}%</span>
-    `;
-    stepList.append(item);
+renderMetrics();
+renderTriggerResult(loadStoredTriggerResult() || {
+  type: "idle",
+  message: "날짜 폴더 안의 채널 폴더를 기준으로 업로드 대상을 확인합니다.",
+});
+renderCards();
+
+document.querySelectorAll(".tab").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+    button.classList.add("active");
+    activeFilter = button.dataset.filter;
+    renderCards();
   });
+});
+
+document.querySelectorAll(".source-tab").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll(".source-tab").forEach((tab) => tab.classList.remove("active"));
+    button.classList.add("active");
+    activeSource = button.dataset.source;
+    renderMetrics();
+    renderCards();
+  });
+});
+
+search.addEventListener("input", () => {
+  searchText = search.value.trim().toLowerCase();
+  renderCards();
+});
+
+setupFolders?.addEventListener("click", async () => {
+  await runDashboardAction("drive", "/api/drive-setup");
+});
+
+writeTemplates?.addEventListener("click", async () => {
+  await runDashboardAction("templates", "/api/drive-templates");
+});
+
+refreshScan?.addEventListener("click", async () => {
+  await runDashboardAction("scan", "/api/scan", { reloadAfter: true });
+});
+
+previewTrigger?.addEventListener("click", async () => {
+  await runDashboardAction("trigger", "/api/trigger-preview");
+});
+
+executeTrigger?.addEventListener("click", async () => {
+  const confirmed = window.confirm("현재 날짜 폴더의 신규 영상을 각 채널에 private로 업로드합니다. 계속할까요?");
+  if (!confirmed) return;
+  await runDashboardAction("trigger", "/api/trigger-execute");
+});
+
+function renderMetrics() {
+  const candidates = candidatesForSource(report.candidates || []);
+  const summary = summarizeCandidates(candidates);
+  const items = [
+    [activeSource === "drive" ? "오늘 Drive 후보" : "전체 스캔 후보", summary.total],
+    ["업로드 가능", summary.ready],
+    ["검토 필요", summary.review],
+    ["중복 차단", summary.duplicates],
+    ["영상 오류", summary.videoFail],
+  ];
+  metrics.innerHTML = items
+    .map(([label, value]) => `<article class="metric"><strong>${value}</strong><span>${label}</span></article>`)
+    .join("");
 }
 
-function render() {
-  document.querySelector(".app-shell").dataset.view = state.view;
-  failureCard.hidden = state.view !== "failed";
-  resultCard.hidden = state.view !== "done";
-  overallProgress.textContent = `${Math.round(state.job?.progress || 0)}%`;
-  if (state.view !== "done") {
-    saveFeedback.hidden = true;
-    saveFeedback.textContent = "";
-  }
-
-  if (state.view === "input") {
-    videoTitle.textContent = "대기 중";
-    videoMeta.textContent = "URL을 입력하면 영상 확인을 시작합니다.";
-  }
-
-  if (state.view === "processing") {
-    videoTitle.textContent = state.job?.result?.title || "영상 분석 중";
-    videoMeta.textContent =
-      state.job?.status === "queued"
-        ? "맥미니 워커 연결을 기다리고 있습니다."
-        : "맥미니 워커가 다운로드와 렌더링을 실행하고 있습니다.";
-  }
-
-  if (state.view === "done") {
-    videoTitle.textContent = state.job?.result?.title || "분석 완료";
-    videoMeta.textContent = state.job?.result?.channel
-      ? `${state.job.result.channel} | 렌더 완료`
-      : "AI 추천 후킹 구간과 첫 렌더가 준비되었습니다.";
-  }
-
-  if (state.view === "failed" && state.failure) {
-    failureTitle.textContent = state.failure.display.title;
-    failureMessage.textContent = state.failure.display.errorMessage;
-  }
-
-  renderSteps();
-  renderCandidates();
-  renderDetailPanel();
-}
-
-function renderCandidates() {
-  const clips = state.job?.result?.clips || [];
-  candidateList.innerHTML = "";
-  if (state.view !== "done" || clips.length === 0) {
-    selectedCount.textContent = "0개 선택됨";
+function renderCards() {
+  const candidates = candidatesForSource(report.candidates || []).filter(matchesFilter).filter(matchesSearch);
+  if (!candidates.length) {
+    grid.innerHTML = `<p class="empty">${emptyMessage()}</p>`;
     return;
   }
-
-  resultSummary.textContent = `${clips.length}개 후보가 준비되었습니다.`;
-  selectedCount.textContent = `${state.selectedClips.size}개 선택됨`;
-  generateSelectedButton.disabled = state.selectedClips.size === 0;
-
-  clips.forEach((clip) => {
-    const selected = state.selectedClips.has(clip.index);
-    const draft = getClipDraft(clip.index);
-    const active = state.activeClipIndex === clip.index;
-    const card = document.createElement("article");
-    card.className = `candidate-card ${selected ? "selected" : ""} ${active ? "active" : ""}`;
-    card.tabIndex = 0;
-    card.innerHTML = `
-      <button type="button" class="candidate-check" aria-label="후보 선택">${selected ? "✓" : ""}</button>
-      ${clip.mostReplayed ? '<span class="most-replayed-badge">가장 많이 본 구간</span>' : ""}
-      <span class="candidate-index">#${clip.index}</span>
-      <strong>${escapeHtml(draft.title)}</strong>
-      <span class="candidate-meta">${formatTime(clip.startSec)} - ${formatTime(clip.endSec)} · ${Math.round(
-        clip.durationSec
-      )}초 · ${Math.round(clip.score * 10)}%</span>
-      <span class="candidate-reason">${escapeHtml(clip.reason)}</span>
-      <span class="candidate-tags">${draft.hashtags.map((tag) => `<em>${escapeHtml(tag)}</em>`).join("")}</span>
-    `;
-    card.addEventListener("click", () => setActiveCandidate(clip.index));
-    card.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        setActiveCandidate(clip.index);
-      }
-    });
-    card.querySelector(".candidate-check").addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleCandidate(clip.index);
-    });
-    candidateList.append(card);
-  });
+  grid.innerHTML = candidates.map(renderCard).join("");
 }
 
-function renderDetailPanel() {
-  const clip = getActiveClip();
-  detailPanel.hidden = state.view !== "done" || !clip;
-  if (!clip) {
-    return;
-  }
-
-  const draft = getClipDraft(clip.index);
-  detailKicker.textContent = `#${clip.index} 상세 편집`;
-  detailTitleHeading.textContent = draft.title;
-  detailTime.textContent = `${formatTime(clip.startSec)} - ${formatTime(clip.endSec)}`;
-  if (document.activeElement !== detailTitleInput) {
-    detailTitleInput.value = draft.title;
-  }
-  detailTitleSize.value = draft.titleSize;
-  detailTitleY.value = draft.titleY;
-  detailTitleAlign.value = draft.titleAlign;
-  detailTitleColorOptions.forEach((option) => {
-    option.classList.toggle("active", option.dataset.color === draft.titleColor);
-  });
-  detailTitleStroke.checked = draft.titleStroke;
-  detailLayoutSelect.value = draft.layout;
-  detailCropZoom.value = draft.cropZoom;
-  detailCropFocusX.value = draft.cropFocusX;
-  detailCropFocusY.value = draft.cropFocusY;
-  detailSafeZone.checked = draft.showSafeZone;
-  detailSubtitleSize.value = draft.subtitleSize;
-  detailSubtitleY.value = draft.subtitleY;
-  detailSubtitleBackground.checked = draft.subtitleBackground;
-  detailChannelEnabled.checked = draft.channelEnabled;
-  if (document.activeElement !== detailChannelInput) {
-    detailChannelInput.value = draft.channelName;
-  }
-  detailChannelSize.value = draft.channelSize;
-  const previewUrl = getClipPreviewUrl(clip);
-  if (previewUrl && detailVideo.getAttribute("src") !== previewUrl) {
-    detailVideo.src = previewUrl;
-  } else if (!previewUrl) {
-    detailVideo.removeAttribute("src");
-  }
-  editPreview.dataset.layout = draft.layout;
-  editPreview.dataset.titleAlign = draft.titleAlign;
-  previewTitleOverlay.textContent = draft.title;
-  previewTitleOverlay.style.fontSize = `${Math.round(Number(draft.titleSize) / 3)}px`;
-  previewTitleOverlay.style.color = draft.titleColor;
-  previewTitleOverlay.style.textAlign = draft.titleAlign;
-  previewTitleOverlay.style.textShadow = draft.titleStroke ? "0 2px 0 #000, 0 0 6px #000" : "none";
-  previewTitleOverlay.style.top = `${draft.titleY}%`;
-  previewTitleOverlay.style.bottom = "auto";
-  previewTitleOverlay.style.transform = "translateY(-50%)";
-  previewSubtitleOverlay.style.fontSize = `${Math.round(Number(draft.subtitleSize) / 2.5)}px`;
-  previewSubtitleOverlay.style.background = draft.subtitleBackground ? "rgba(0, 0, 0, 0.68)" : "transparent";
-  previewSubtitleOverlay.textContent = clip.sourceText.split(" ").slice(0, 8).join(" ");
-  previewSubtitleOverlay.style.top = `${draft.subtitleY}%`;
-  previewSubtitleOverlay.style.bottom = "auto";
-  previewSubtitleOverlay.style.transform = "translateY(-50%)";
-  previewChannelOverlay.hidden = !draft.channelEnabled;
-  previewChannelOverlay.textContent = draft.channelName;
-  previewChannelOverlay.style.fontSize = `${Math.round(Number(draft.channelSize) / 2.2)}px`;
-  safeZoneFrame.hidden = !draft.showSafeZone;
-  detailVideo.style.objectPosition = `${Number(draft.cropFocusX) * 100}% ${Number(draft.cropFocusY) * 100}%`;
-  detailVideo.style.transformOrigin = `${Number(draft.cropFocusX) * 100}% ${Number(draft.cropFocusY) * 100}%`;
-  detailVideo.style.transform = draft.layout === "crop" ? `scale(${Number(draft.cropZoom)})` : "none";
-  detailTags.innerHTML = "";
-  draft.hashtags.forEach((tag) => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "editable-tag";
-    chip.innerHTML = `${escapeHtml(tag)} <span aria-hidden="true">×</span>`;
-    chip.addEventListener("click", () => removeTag(clip.index, tag));
-    detailTags.append(chip);
-  });
+function candidatesForSource(candidates) {
+  if (activeSource === "all") return candidates;
+  return candidates.filter((candidate) => candidate.item?.adapter === "google_drive_date");
 }
 
-function getClipPreviewUrl(clip) {
-  const rendered = state.job?.result?.selectedRender?.renders?.find((item) => item.index === clip.index);
-  if (rendered?.outputUrl) {
-    return rendered.outputUrl;
+function summarizeCandidates(candidates) {
+  return candidates.reduce(
+    (summary, candidate) => {
+      summary.total += 1;
+      if (candidate.upload_ready) summary.ready += 1;
+      if (candidate.item?.policy?.requires_review) summary.review += 1;
+      if (!candidate.video_probe?.ok) summary.videoFail += 1;
+      if (!["new", "seen"].includes(candidate.duplicate_status)) summary.duplicates += 1;
+      return summary;
+    },
+    { total: 0, ready: 0, review: 0, videoFail: 0, duplicates: 0 },
+  );
+}
+
+function emptyMessage() {
+  if (activeSource === "drive") {
+    return "오늘 Drive 날짜 폴더에서 표시할 업로드 후보가 없습니다. 20260531/채널명 폴더 안에 영상과 JSON 또는 같은 이름 캡처 이미지를 넣은 뒤 스캔 갱신을 누르세요.";
   }
-  if (state.job?.result?.inputUrl) {
-    return `${state.job.result.inputUrl}#t=${clip.startSec},${clip.endSec}`;
-  }
-  return state.job?.result?.renderUrl || "";
+  return "표시할 후보가 없습니다.";
 }
 
-function getActiveClip() {
-  return (state.job?.result?.clips || []).find((clip) => clip.index === state.activeClipIndex) || null;
+function matchesFilter(candidate) {
+  if (activeFilter === "all") return true;
+  if (activeFilter === "ready") return candidate.upload_ready;
+  if (activeFilter === "review") return candidate.item.policy.requires_review;
+  if (activeFilter === "fail") return !candidate.video_probe.ok;
+  if (activeFilter === "duplicate") return !["new", "seen"].includes(candidate.duplicate_status);
+  return true;
 }
 
-function setActiveCandidate(index) {
-  state.activeClipIndex = index;
-  renderCandidates();
-  renderDetailPanel();
+function matchesSearch(candidate) {
+  if (!searchText) return true;
+  const haystack = [
+    candidate.item.source_project,
+    candidate.item.source_title,
+    candidate.seo.title,
+    candidate.seo.description,
+    ...(candidate.seo.tags || []),
+    ...(candidate.seo.hashtags || []),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(searchText);
 }
 
-function getClipDraft(index) {
-  const clip = (state.job?.result?.clips || []).find((item) => item.index === index);
-  if (!state.clipDrafts.has(index)) {
-    state.clipDrafts.set(index, buildDefaultDraft(clip));
-  }
-  return state.clipDrafts.get(index);
+function renderCard(candidate) {
+  const status = cardStatus(candidate);
+  const probe = candidate.video_probe || {};
+  const item = candidate.item || {};
+  const seo = candidate.seo || {};
+  return `
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <h2>${escapeHtml(seo.title || item.video_name)}</h2>
+          <div class="project">${escapeHtml(item.source_project)} · ${escapeHtml(item.adapter)} · ${escapeHtml(item.target_channel || report.channels?.default || "default")} · clip ${item.clip_index || "-"}</div>
+        </div>
+        <span class="status ${status.className}">${status.label}</span>
+      </div>
+      <div class="card-body">
+        <div class="row"><div class="label">설명</div><div class="desc">${escapeHtml(seo.description || "")}</div></div>
+        <div class="row"><div class="label">해시태그</div><div class="chips">${chips(seo.hashtags || [])}</div></div>
+        <div class="row"><div class="label">태그</div><div class="chips">${chips(seo.tags || [])}</div></div>
+        <div class="row"><div class="label">영상</div><div>${probe.width || "-"}x${probe.height || "-"} · ${fmt(probe.duration_sec)}초 · ${escapeHtml(probe.reason || "")}</div></div>
+        <div class="row"><div class="label">중복</div><div>${escapeHtml(candidate.duplicate_status)} · ${escapeHtml(candidate.duplicate_reason)}</div></div>
+        <div class="row"><div class="label">검토</div><div>${escapeHtml(item.policy.review_reason || "없음")}</div></div>
+        <div class="row"><div class="label">파일</div><div class="path">${escapeHtml(item.video_path)}</div></div>
+      </div>
+    </article>
+  `;
 }
 
-function buildDefaultDraft(clip) {
-  return {
-      title: clip?.title || "",
-      hashtags: [...(clip?.hashtags || [])],
-      layout: "letterbox",
-      cropFocusX: 0.5,
-      cropFocusY: 0.5,
-      cropZoom: 1,
-      showSafeZone: true,
-      titleSize: 72,
-      titleY: 12,
-      titleAlign: "center",
-      titleColor: "#ffffff",
-      titleStroke: true,
-      subtitleSize: 48,
-      subtitleY: 72,
-      subtitleBackground: true,
-      channelEnabled: true,
-      channelName: state.job?.result?.channel || "@MyChannel",
-      channelSize: 42,
+function cardStatus(candidate) {
+  if (!candidate.video_probe.ok) return { className: "fail", label: "영상 실패" };
+  if (isUploaded(candidate)) return { className: "complete", label: "업로드 완료" };
+  if (!["new", "seen"].includes(candidate.duplicate_status)) return { className: "duplicate", label: "중복 차단" };
+  if (candidate.upload_ready) return { className: "ready", label: "업로드 가능" };
+  return { className: "review", label: "검토 필요" };
+}
+
+async function runDashboardAction(type, endpoint, options = {}) {
+  const state = {
+    type: "pending",
+    message: actionLabel(type, endpoint),
   };
+  renderTriggerResult(state);
+  setActionBusy(true);
+  try {
+    const { response, payload } = await dashboardFetch(endpoint, {
+      date: cleanDate(triggerDate?.value),
+      allow_review: Boolean(allowReview?.checked),
+    });
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    const nextState = {
+      type,
+      result: payload.result || payload,
+      savedAt: new Date().toLocaleString("ko-KR"),
+    };
+    saveStoredTriggerResult(nextState);
+    renderTriggerResult(nextState);
+    if (options.reloadAfter) {
+      window.setTimeout(() => window.location.reload(), 900);
+    }
+  } catch (error) {
+    renderTriggerResult({
+      type: "error",
+      message: error.message || String(error),
+    });
+  } finally {
+    setActionBusy(false);
+  }
 }
 
-function updateDraft(index, patch) {
-  const draft = getClipDraft(index);
-  state.clipDrafts.set(index, { ...draft, ...patch });
-  renderCandidates();
-  renderDetailPanel();
+async function dashboardFetch(endpoint, body, retry = true) {
+  const headers = { "Content-Type": "application/json" };
+  const token = window.localStorage.getItem("uploader:adminToken") || "";
+  if (token) headers["X-Uploader-Admin-Token"] = token;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && retry) {
+    const nextToken = window.prompt("관리자 토큰을 입력하세요.");
+    if (nextToken) {
+      window.localStorage.setItem("uploader:adminToken", nextToken.trim());
+      return dashboardFetch(endpoint, body, false);
+    }
+  }
+  return { response, payload };
 }
 
-function removeTag(index, tag) {
-  const draft = getClipDraft(index);
-  updateDraft(index, { hashtags: draft.hashtags.filter((item) => item !== tag) });
-}
-
-function addTag(index, tag) {
-  const normalized = tag.trim().replace(/^#+/, "");
-  if (!normalized) {
+function renderTriggerResult(state) {
+  if (!triggerResult) return;
+  if (!state || state.type === "idle") {
+    triggerResult.className = "trigger-result";
+    triggerResult.innerHTML = `<span>${escapeHtml(state?.message || "")}</span>`;
     return;
   }
-  const value = `#${normalized}`;
-  const draft = getClipDraft(index);
-  if (draft.hashtags.includes(value)) {
+  if (state.type === "pending") {
+    triggerResult.className = "trigger-result pending";
+    triggerResult.innerHTML = `<span>${escapeHtml(state.message || "처리 중입니다.")}</span>`;
     return;
   }
-  updateDraft(index, { hashtags: [...draft.hashtags, value] });
-}
-
-function toggleCandidate(index) {
-  if (state.selectedClips.has(index)) {
-    state.selectedClips.delete(index);
-  } else {
-    state.selectedClips.add(index);
+  if (state.type === "error") {
+    triggerResult.className = "trigger-result error";
+    triggerResult.innerHTML = `<strong>오류</strong><span>${escapeHtml(state.message || "알 수 없는 오류")}</span>`;
+    return;
   }
-  renderCandidates();
+  if (state.type === "drive") {
+    renderDriveResult(state);
+    return;
+  }
+  if (state.type === "templates") {
+    renderTemplateResult(state);
+    return;
+  }
+  if (state.type === "scan") {
+    renderScanResult(state);
+    return;
+  }
+  renderUploadResult(state);
 }
 
-function formatTime(seconds) {
-  const value = Number(seconds || 0);
-  const minute = Math.floor(value / 60);
-  const second = Math.floor(value % 60);
-  return `${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`;
+function renderTemplateResult(state) {
+  const result = state.result || {};
+  const channels = result.channels || [];
+  triggerResult.className = "trigger-result success";
+  triggerResult.innerHTML = `
+    <div class="result-head">
+      <strong>JSON 양식 배포 완료</strong>
+      <span>${escapeHtml(result.date || cleanDate(triggerDate?.value) || "-")}</span>
+    </div>
+    <div class="result-note">${escapeHtml(result.template_name || "_metadata_template.json")} 파일을 채널 폴더 ${channels.length}개에 배포했습니다.</div>
+  `;
+}
+
+function renderDriveResult(state) {
+  const result = state.result || {};
+  const channels = result.channels || [];
+  triggerResult.className = "trigger-result success";
+  triggerResult.innerHTML = `
+    <div class="result-head">
+      <strong>폴더 확인 완료</strong>
+      <span>${escapeHtml(result.date || cleanDate(triggerDate?.value) || "-")}</span>
+    </div>
+    <div class="result-note">날짜 폴더와 채널 폴더 ${channels.length}개를 확인했습니다.</div>
+  `;
+}
+
+function renderScanResult(state) {
+  const summary = state.result?.summary || {};
+  triggerResult.className = "trigger-result success";
+  triggerResult.innerHTML = `
+    <div class="result-head">
+      <strong>스캔 갱신 완료</strong>
+      <span>${escapeHtml(state.savedAt || "")}</span>
+    </div>
+    <div class="result-counts">
+      ${countPill("전체", summary.total || 0)}
+      ${countPill("업로드 가능", summary.ready || 0)}
+      ${countPill("검토", summary.review || 0)}
+      ${countPill("영상 실패", summary.videoFail || 0)}
+    </div>
+    <div class="result-note">리포트를 다시 불러옵니다.</div>
+  `;
+}
+
+function renderUploadResult(state) {
+  const result = state.result || {};
+  const uploaded = result.uploaded || [];
+  const failed = result.failed || [];
+  const skipped = result.skipped || [];
+  const completed = result.execute && uploaded.length > 0 && failed.length === 0;
+  const processed = result.execute && uploaded.length === 0 && failed.length === 0;
+  const title = completed
+    ? "업로드 완료"
+    : processed
+      ? "처리 완료"
+      : result.execute
+        ? "업로드 실행 결과"
+        : "미리보기 완료";
+  triggerResult.className = `trigger-result ${completed || processed ? "complete" : failed.length ? "error" : "success"}`;
+  triggerResult.innerHTML = `
+    <div class="result-head">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(result.date || cleanDate(triggerDate?.value) || "-")}</span>
+    </div>
+    <div class="result-counts">
+      ${countPill("후보", result.candidate_count || 0)}
+      ${countPill("업로드", result.uploaded_count || 0)}
+      ${countPill("스킵", result.skipped_count || 0)}
+      ${countPill("실패", result.failed_count || 0)}
+    </div>
+    ${uploaded.length ? uploadedList(uploaded) : ""}
+    ${failed.length ? issueList("실패", failed, "error") : ""}
+    ${skipped.length ? issueList("스킵", skipped.slice(0, 6), "muted") : ""}
+    ${!uploaded.length && !failed.length && !skipped.length ? `<div class="result-note">현재 날짜 폴더에 처리할 영상 후보가 없습니다.</div>` : ""}
+  `;
+}
+
+function uploadedList(items) {
+  return `
+    <ul class="result-list uploaded">
+      ${items
+        .map(
+          (item) => `
+            <li>
+              <span>${escapeHtml(item.channel_key || "-")}</span>
+              <a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noreferrer">${escapeHtml(item.title || item.url || "YouTube 영상")}</a>
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
+function issueList(label, items, className) {
+  return `
+    <div class="issue-list ${className}">
+      <strong>${escapeHtml(label)}</strong>
+      <ul>
+        ${items
+          .map(
+            (item) => `<li>${escapeHtml(item.channel_key || "-")} · ${escapeHtml(item.title || "")} · ${escapeHtml(item.reason || item.error || "")}</li>`,
+          )
+          .join("")}
+      </ul>
+    </div>
+  `;
+}
+
+function countPill(label, value) {
+  return `<span class="count"><strong>${escapeHtml(value)}</strong>${escapeHtml(label)}</span>`;
+}
+
+function setActionBusy(isBusy) {
+  [setupFolders, writeTemplates, refreshScan, previewTrigger, executeTrigger].forEach((button) => {
+    if (button) button.disabled = isBusy;
+  });
+}
+
+function actionLabel(type, endpoint) {
+  if (type === "drive") return "구글 드라이브 날짜/채널 폴더를 확인하는 중입니다.";
+  if (type === "templates") return "각 채널 폴더에 JSON 메타데이터 양식을 배포하는 중입니다.";
+  if (type === "scan") return "날짜 폴더의 영상과 메타데이터를 다시 스캔하는 중입니다.";
+  if (endpoint.includes("execute")) return "채널별 private 업로드를 실행하는 중입니다.";
+  return "업로드 전 미리보기를 생성하는 중입니다.";
+}
+
+function cleanDate(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 8);
+}
+
+function todayKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+function isUploaded(candidate) {
+  const status = String(candidate.duplicate_status || "");
+  const reason = String(candidate.duplicate_reason || "");
+  return status === "duplicate" && /이미 업로드|youtube|youtu\.be/i.test(reason);
+}
+
+function loadStoredTriggerResult() {
+  try {
+    const raw = window.localStorage.getItem("uploader:lastTriggerResult");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredTriggerResult(value) {
+  try {
+    window.localStorage.setItem("uploader:lastTriggerResult", JSON.stringify(value));
+  } catch {
+    // Local storage can be unavailable in hardened browser profiles.
+  }
+}
+
+function chips(values) {
+  return values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join("");
+}
+
+function fmt(value) {
+  if (typeof value !== "number") return "-";
+  return value.toFixed(1);
 }
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-
-function resetToInput() {
-  window.clearInterval(state.pollTimer);
-  state.view = "input";
-  state.job = null;
-  state.failure = null;
-  state.selectedClips = new Set();
-  state.activeClipIndex = null;
-  state.clipDrafts = new Map();
-  saveFeedback.hidden = true;
-  saveFeedback.textContent = "";
-  urlInput.focus();
-  render();
-}
-
-function failFromState(failure) {
-  window.clearInterval(state.pollTimer);
-  state.view = "failed";
-  state.failure = failure;
-  render();
-}
-
-async function startJob(url) {
-  window.clearInterval(state.pollTimer);
-  state.url = url.trim();
-  state.view = "processing";
-  state.failure = null;
-  state.selectedClips = new Set();
-  state.activeClipIndex = null;
-  state.clipDrafts = new Map();
-  saveFeedback.hidden = true;
-  saveFeedback.textContent = "";
-  state.job = {
-    progress: 0,
-    steps: steps.map((step) => ({
-      ...step,
-      status: "pending",
-      progress: 0,
-    })),
-  };
-  render();
-
-  try {
-    const response = await fetch("/api/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: state.url }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "작업을 시작하지 못했습니다.");
-    }
-    state.job = payload;
-    render();
-    pollJob(payload.id);
-  } catch (error) {
-    failFromState(buildClientFailure(error.message));
-  }
-}
-
-function pollJob(jobId) {
-  window.clearInterval(state.pollTimer);
-  state.pollTimer = window.setInterval(async () => {
-    try {
-      const response = await fetch(`/api/jobs/${jobId}`);
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || "작업 상태를 가져오지 못했습니다.");
-      }
-      state.job = payload;
-      if (payload.status === "failed") {
-        failFromState(payload.failure);
-        return;
-      }
-      if (payload.status === "done") {
-        window.clearInterval(state.pollTimer);
-        state.view = "done";
-        const clips = payload.result?.clips || [];
-        state.selectedClips = new Set(clips.map((clip) => clip.index));
-        state.activeClipIndex = clips[0]?.index || null;
-      }
-      render();
-    } catch (error) {
-      failFromState(buildClientFailure(error.message));
-    }
-  }, 1200);
-}
-
-function buildClientFailure(message) {
-  return {
-    status: "failed",
-    step: "download_youtube",
-    display: {
-      title: "작업 실행 실패",
-      errorMessage: message,
-      actions: [
-        { id: "restart", label: "처음으로", type: "navigate", target: "url_input" },
-        { id: "retry", label: "다시 실행", type: "command", args: { url: state.url } },
-      ],
-    },
-  };
-}
-
-form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const url = urlInput.value.trim();
-  if (!url) {
-    urlInput.focus();
-    return;
-  }
-  startJob(url);
-});
-
-restartButton.addEventListener("click", () => {
-  resetToInput();
-});
-
-retryButton.addEventListener("click", () => {
-  const retryUrl = state.failure?.display.actions.find((action) => action.id === "retry")?.args.url || state.url;
-  startJob(retryUrl);
-});
-
-selectAllButton.addEventListener("click", () => {
-  state.selectedClips = new Set((state.job?.result?.clips || []).map((clip) => clip.index));
-  renderCandidates();
-});
-
-clearAllButton.addEventListener("click", () => {
-  state.selectedClips = new Set();
-  renderCandidates();
-});
-
-generateSelectedButton.addEventListener("click", () => {
-  renderSelectedClips();
-});
-
-async function renderSelectedClips() {
-  const selected = Array.from(state.selectedClips).sort((a, b) => a - b);
-  if (!state.job?.id || selected.length === 0) {
-    return;
-  }
-  const originalLabel = generateSelectedButton.textContent;
-  generateSelectedButton.disabled = true;
-  generateSelectedButton.textContent = "생성 중";
-  resultSummary.textContent = `${selected.length}개 클립을 렌더링하고 있습니다.`;
-  saveFeedback.hidden = true;
-  saveFeedback.textContent = "";
-
-  const clips = selected.map((index) => ({
-    index,
-    ...getClipDraft(index),
-  }));
-
-  try {
-    const response = await fetch(`/api/jobs/${state.job.id}/render-selected`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clips }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "선택된 클립을 생성하지 못했습니다.");
-    }
-    state.job.result.selectedRender = payload;
-    resultSummary.textContent = "저장 되었습니다";
-    saveFeedback.hidden = false;
-    saveFeedback.textContent = `${payload.count}개 클립이 ${payload.exportDir || "저장 폴더"}에 저장 되었습니다.`;
-    renderDetailPanel();
-  } catch (error) {
-    failFromState(buildClientFailure(error.message));
-  } finally {
-    generateSelectedButton.textContent = originalLabel.trim() || "선택된 클립 생성";
-    generateSelectedButton.disabled = state.selectedClips.size === 0;
-  }
-}
-
-detailTitleInput.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { title: detailTitleInput.value });
-});
-
-detailTitleSize.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { titleSize: Number(detailTitleSize.value) });
-});
-
-detailTitleY.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { titleY: Number(detailTitleY.value) });
-});
-
-detailTitleAlign.addEventListener("change", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { titleAlign: detailTitleAlign.value });
-});
-
-detailTitleColorOptions.forEach((option) => {
-  option.style.setProperty("--swatch-color", option.dataset.color);
-  option.addEventListener("click", () => {
-    if (!state.activeClipIndex) {
-      return;
-    }
-    const color = titleColorPresets.includes(option.dataset.color) ? option.dataset.color : "#ffffff";
-    updateDraft(state.activeClipIndex, { titleColor: color });
-  });
-});
-
-detailTitleStroke.addEventListener("change", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { titleStroke: detailTitleStroke.checked });
-});
-
-detailLayoutSelect.addEventListener("change", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { layout: detailLayoutSelect.value });
-});
-
-detailCropZoom.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { cropZoom: Number(detailCropZoom.value) });
-});
-
-detailCropFocusX.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { cropFocusX: Number(detailCropFocusX.value) });
-});
-
-detailCropFocusY.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { cropFocusY: Number(detailCropFocusY.value) });
-});
-
-detailSafeZone.addEventListener("change", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { showSafeZone: detailSafeZone.checked });
-});
-
-detailSubtitleSize.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { subtitleSize: Number(detailSubtitleSize.value) });
-});
-
-detailSubtitleY.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { subtitleY: Number(detailSubtitleY.value) });
-});
-
-detailSubtitleBackground.addEventListener("change", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { subtitleBackground: detailSubtitleBackground.checked });
-});
-
-detailChannelEnabled.addEventListener("change", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { channelEnabled: detailChannelEnabled.checked });
-});
-
-detailChannelInput.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { channelName: detailChannelInput.value });
-});
-
-detailChannelSize.addEventListener("input", () => {
-  if (!state.activeClipIndex) {
-    return;
-  }
-  updateDraft(state.activeClipIndex, { channelSize: Number(detailChannelSize.value) });
-});
-
-resetDetailButton.addEventListener("click", () => {
-  const clip = getActiveClip();
-  if (!clip) {
-    return;
-  }
-  state.clipDrafts.set(clip.index, buildDefaultDraft(clip));
-  renderCandidates();
-  renderDetailPanel();
-});
-
-tagForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  if (!state.activeClipIndex) {
-    return;
-  }
-  addTag(state.activeClipIndex, detailTagInput.value);
-  detailTagInput.value = "";
-});
-
-urlInput.value = "";
-render();

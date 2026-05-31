@@ -1,0 +1,27 @@
+{
+  "project": "google-drive-date-folder",
+  "date": "YYYYMMDD",
+  "video": "same-name-as-video.mp4",
+  "channel": "",
+  "title": "시청자가 바로 클릭할 이유가 보이는 후킹형 제목",
+  "hook": "첫 문장에 궁금증, 반전, 핵심 행동, 장면 긴장감 중 하나를 넣습니다.",
+  "description": "첫 두 줄에 핵심 장면과 검색 키워드를 자연스럽게 넣습니다.\n영상 맥락, 주요 행동, 채널 주제와 연결되는 문장을 추가합니다.",
+  "tags": [
+    "유튜브 쇼츠",
+    "쇼츠 하이라이트",
+    "장면 키워드",
+    "행동 키워드",
+    "채널 키워드"
+  ],
+  "hashtags": [
+    "#Shorts",
+    "#쇼츠",
+    "#하이라이트"
+  ],
+  "transcript": "",
+  "requires_review": false,
+  "review_reason": "",
+  "selfDeclaredMadeForKids": false,
+  "containsSyntheticMedia": false,
+  "hasPaidProductPlacement": false
+}
